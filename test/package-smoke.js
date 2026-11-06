@@ -40,7 +40,7 @@ const cmd = path.join(systemRoot, 'System32', 'cmd.exe');
 const where = spawnSync(path.join(systemRoot, 'System32', 'where.exe'), ['node'], { env, encoding: 'utf8' });
 assert.equal(where.status, 1, `Host Node is still visible on the isolated PATH: ${where.stdout}`);
 const invokeCli = (...args) => spawnSync(cmd, ['/d', '/c', `sbx.cmd ${args.join(' ')}`], {
-  cwd: unpacked, env, encoding: 'utf8', timeout: 30_000,
+  cwd: unpacked, env, encoding: 'utf8', timeout: 90_000,
 });
 
 const help = invokeCli('help');
@@ -51,12 +51,15 @@ assert.equal(version.status, 0, `Packaged CLI version failed: ${version.stderr |
 assert.equal(version.stdout.trim(), packageMetadata.version);
 
 const doctor = invokeCli('doctor', '--json');
-assert.ok([0, 1].includes(doctor.status), `Packaged doctor failed unexpectedly: ${doctor.stderr || doctor.stdout}`);
-const report = JSON.parse(doctor.stdout);
+const doctorOutput = `exit ${doctor.status}${doctor.error ? ` (${doctor.error.message})` : ''}\nstdout: ${doctor.stdout}\nstderr: ${doctor.stderr}`;
+assert.ok([0, 1].includes(doctor.status), `Packaged doctor failed unexpectedly: ${doctorOutput}`);
+let report;
+try { report = JSON.parse(doctor.stdout); } catch { assert.fail(`doctor --json did not print JSON: ${doctorOutput}`); }
 assert.ok(Array.isArray(report.checks) && report.checks.length > 0, 'doctor --json did not return structured checks.');
 assert.equal(typeof report.ok, 'boolean');
 assert.equal(typeof report.facts.node, 'string', 'doctor did not report the bundled Node runtime.');
 assert.equal(doctor.status, report.ok ? 0 : 1, 'doctor exit code does not match readiness.');
+console.log(`doctor on this machine: ${report.ok ? 'ready' : 'not ready'} ${JSON.stringify(report.facts)}`);
 
 const server = spawn(node, ['src/server.js'], { cwd: unpacked, env, stdio: ['pipe', 'pipe', 'pipe'] });
 let stderr = '';

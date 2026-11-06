@@ -98,7 +98,7 @@ Open PowerShell in the extracted folder and start with the read-only readiness c
 
 `doctor` explains what is missing and how to fix it. It never enables Windows features, elevates, changes PATH, or
 restarts the PC for you. Windows Sandbox is only available on Windows Pro, Enterprise or Education; Windows Home
-cannot run it.
+and Windows Server cannot run it.
 
 If the Sandbox feature is off, open **an administrator PowerShell**, run the command below, then restart Windows:
 
@@ -172,7 +172,7 @@ Ready. Try: sbx run C:\Windows\System32\charmap.exe --open
 If something's missing, `sbx doctor` says what and how to fix it, and every other command tells you the same thing
 if it can't reach Windows Sandbox. The full list of what you need:
 
-- Windows 11 24H2 (build 26100) or later, Pro / Enterprise / Education. Windows Sandbox isn't available on Home.
+- Windows 11 24H2 (build 26100) or later, Pro / Enterprise / Education. Windows Sandbox isn't available on Home or Windows Server.
 - Virtualization turned on in your PC's UEFI/BIOS (Intel VT-x or AMD-V). Most PCs ship with it on.
 - At least 4 GB of RAM (8 GB recommended), 2 CPU cores and 1 GB of free disk.
 - Running inside a VM? Turn on nested virtualization on the host first:

@@ -42,26 +42,33 @@ function wsb(args, timeoutMs = 120_000) {
 export const ENABLE_SANDBOX = 'Enable-WindowsOptionalFeature -Online -FeatureName Containers-DisposableClientVM -All';
 
 // Non-admin probe. Win32_OptionalFeature InstallState: 1 enabled, 2 disabled, 3 absent.
+// One statement per fact: inside a single @{...} literal, one lookup that throws makes PowerShell print nothing at all.
 const PROBE = `$ErrorActionPreference = 'SilentlyContinue'
+$f = [ordered]@{}
 $os = Get-CimInstance Win32_OperatingSystem
+$f.caption = "$($os.Caption)" -replace '^Microsoft ', ''
+$f.build = [int]$os.BuildNumber
+$f.edition = (Get-ItemProperty 'HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion').EditionID
+$f.feature = (Get-CimInstance Win32_OptionalFeature -Filter "Name='Containers-DisposableClientVM'").InstallState
+$f.hypervisor = [bool](Get-CimInstance Win32_ComputerSystem).HypervisorPresent
+$f.vt = (Get-CimInstance Win32_Processor | Select-Object -First 1).VirtualizationFirmwareEnabled
+$f.wsb = (Get-Command wsb.exe).Source
 $alias = Join-Path $env:LOCALAPPDATA 'Microsoft\\WindowsApps\\wsb.exe'
-[ordered]@{
-  caption = "$($os.Caption)" -replace '^Microsoft ', ''
-  build = [int]$os.BuildNumber
-  edition = (Get-ItemProperty 'HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion').EditionID
-  feature = (Get-CimInstance Win32_OptionalFeature -Filter "Name='Containers-DisposableClientVM'").InstallState
-  hypervisor = [bool](Get-CimInstance Win32_ComputerSystem).HypervisorPresent
-  vt = (Get-CimInstance Win32_Processor | Select-Object -First 1).VirtualizationFirmwareEnabled
-  wsb = (Get-Command wsb.exe).Source
-  alias = $(if (Test-Path $alias) { $alias })
-  version = "$((Get-AppxPackage MicrosoftWindows.WindowsSandbox).Version)"
-} | ConvertTo-Json -Compress`;
+if (Test-Path $alias) { $f.alias = $alias }
+$f.version = "$((Get-AppxPackage MicrosoftWindows.WindowsSandbox).Version)"
+$f | ConvertTo-Json -Compress`;
 
-/** Check whether this PC can run Windows Sandbox (and sbx). Takes a few seconds. */
+/** Check whether this PC can run Windows Sandbox (and sbx). Takes a few seconds. Never throws: a probe that fails is reported as a failed check. */
 export async function checkSandbox() {
-  const facts = await new Promise((resolve, reject) => {
-    execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', PROBE], { timeout: 60_000, windowsHide: true }, (err, stdout) => {
-      try { resolve(JSON.parse(stdout)); } catch { reject(new Error(`could not check Windows Sandbox: ${err?.message || stdout}`)); }
+  const facts = await new Promise((resolve) => {
+    execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', PROBE], { timeout: 60_000, windowsHide: true }, (err, stdout, stderr) => {
+      try {
+        const f = JSON.parse(stdout);
+        resolve(f.build ? f : { probeError: 'Windows reported no version information' });
+      } catch {
+        resolve({ probeError: err?.code === 'ENOENT' ? 'powershell.exe not found' : err?.killed ? 'PowerShell timed out'
+          : String(stderr).trim().split(/\r?\n/)[0] || 'PowerShell printed nothing' });
+      }
     });
   });
   facts.node = process.versions.node;
@@ -73,9 +80,13 @@ export async function checkSandbox() {
 export function sandboxChecks(f) {
   const checks = [];
   const add = (ok, detail, fix) => checks.push(ok ? { ok, detail } : { ok, detail, fix });
-  if (/^Core/i.test(f.edition || '')) {
-    add(false, `${f.caption} doesn't include Windows Sandbox (Home editions don't)`,
-      'Upgrade to Windows 11 Pro, Enterprise or Education (Settings > System > Activation).');
+  if (f.probeError) {
+    add(false, `Couldn't read this PC's Windows settings (${f.probeError})`, 'Run "sbx doctor" again from a regular PowerShell window.');
+    return checks;
+  }
+  if (/^(Core|Server)/i.test(f.edition || '')) {
+    add(false, `${f.caption} doesn't include Windows Sandbox (Home and Server editions don't)`,
+      'Use Windows 11 Pro, Enterprise or Education (to upgrade from Home: Settings > System > Activation).');
     return checks;
   }
   add(f.build >= 26100, `${f.caption}, build ${f.build}`,
@@ -97,7 +108,7 @@ export const formatChecks = (checks) => checks.map((c) => `${c.ok ? '✅' : '❌
 
 async function explainNotReady(e, reason) {
   const r = await checkSandbox().catch(() => null);
-  if (!r || r.ok) return e;
+  if (!r || r.ok || r.facts.probeError) return e; // if we couldn't read the PC's state, the original error is the better message
   return new Error(`Windows Sandbox isn't ready on this PC (${reason}):\n${formatChecks(r.checks.filter((c) => !c.ok))}\nRun "sbx doctor" to check again.`);
 }
 
