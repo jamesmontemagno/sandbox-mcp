@@ -81,6 +81,57 @@ install, launch and work on a clean PC, and what does it look like?"* as quickly
 - **Collect evidence:** every run keeps screenshots, copied-out files, a markdown report and an audit log on the
   host after the sandbox is gone.
 
+## Download and try it (no Node.js install)
+
+Download the **Windows x64 portable ZIP** from the [latest GitHub release](https://github.com/shanselman/sandbox-mcp/releases/latest)
+and extract it. The ZIP includes `sbx`, the MCP server, their dependencies, the guest agent and skill, and a private
+Node.js runtime. You do not need to clone the repo, install Node/npm, or add anything to PATH.
+The package is built and tested on native Windows x64; ARM64 is not currently packaged.
+
+Newly published releases include this ZIP; older releases without a Windows download contain only source archives.
+
+Open PowerShell in the extracted folder and start with the read-only readiness check:
+
+```powershell
+.\sbx.cmd doctor
+```
+
+`doctor` explains what is missing and how to fix it. It never enables Windows features, elevates, changes PATH, or
+restarts the PC for you. Windows Sandbox is only available on Windows Pro, Enterprise or Education; Windows Home
+cannot run it.
+
+If the Sandbox feature is off, open **an administrator PowerShell**, run the command below, then restart Windows:
+
+```powershell
+Enable-WindowsOptionalFeature -Online -FeatureName Containers-DisposableClientVM -All
+```
+
+After restarting, open **Windows Sandbox from the Start menu once**, then close it. This updates Sandbox and installs
+the `wsb` command-line tool that `sbx` uses. Run the check again and try a built-in Windows app:
+
+```powershell
+.\sbx.cmd doctor
+.\sbx.cmd run C:\Windows\System32\charmap.exe --open
+```
+
+For an MCP client, configure its stdio server with the full paths to the bundled runtime and server. Replace the
+example folder with the location where you extracted the ZIP:
+
+```json
+{
+  "servers": {
+    "windows-sandbox": {
+      "type": "stdio",
+      "command": "C:\\Users\\you\\Downloads\\sandbox-mcp\\node.exe",
+      "args": ["C:\\Users\\you\\Downloads\\sandbox-mcp\\src\\server.js"]
+    }
+  }
+}
+```
+
+Claude Desktop and some other clients use `"mcpServers"` instead of `"servers"`. The server writes startup logs to
+stderr; its stdout is reserved for MCP messages.
+
 ## Turn on Windows Sandbox
 
 If you have Windows Pro, Enterprise or Education, you already own one of the best tools in Windows and it's probably
@@ -126,9 +177,9 @@ if it can't reach Windows Sandbox. The full list of what you need:
 - At least 4 GB of RAM (8 GB recommended), 2 CPU cores and 1 GB of free disk.
 - Running inside a VM? Turn on nested virtualization on the host first:
   `Set-VMProcessor -VMName <name> -ExposeVirtualizationExtensions $true`.
-- Node.js 20+ (`winget install OpenJS.NodeJS.LTS`).
+- The portable ZIP bundles Node.js for Windows x64. If installing from source, use Node.js 20+ (`winget install OpenJS.NodeJS.LTS`).
 
-## Quick start
+## Install from source
 
 ```powershell
 git clone https://github.com/shanselman/sandbox-mcp

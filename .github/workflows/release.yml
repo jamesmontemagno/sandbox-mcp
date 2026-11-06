@@ -1,0 +1,45 @@
+name: Release
+
+on:
+  release:
+    types: [published]
+  # Manual runs build and test the package and keep it as a workflow artifact; they never touch a release.
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  windows-portable:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 26
+          cache: npm
+      - run: npm ci --omit=dev
+      - run: npm test
+      - run: npm run package:win
+      - name: Smoke-test portable package
+        run: node test/package-smoke.js (Get-ChildItem dist\*.zip | Select-Object -First 1 -ExpandProperty FullName)
+        shell: pwsh
+      - name: Keep package (manual run)
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v4
+        with:
+          name: sandbox-mcp-win-x64
+          path: dist/*.zip
+          if-no-files-found: error
+      - name: Upload Windows x64 package
+        if: github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          $version = node -p "require('./package.json').version"
+          $tag = $env:RELEASE_TAG
+          if ($tag -ne "v$version") { throw "Release tag $tag does not match package version v$version." }
+          $asset = Get-ChildItem dist\*.zip | Select-Object -First 1 -ExpandProperty FullName
+          gh release upload $tag $asset --clobber
+        shell: pwsh

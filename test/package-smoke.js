@@ -1,0 +1,109 @@
+import assert from 'node:assert/strict';
+import { spawn, spawnSync } from 'node:child_process';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { createInterface } from 'node:readline';
+import { setTimeout as delay } from 'node:timers/promises';
+
+if (process.platform !== 'win32') throw new Error('The portable package smoke test requires Windows.');
+const archive = process.argv[2];
+if (!archive) throw new Error('Usage: node test/package-smoke.js <portable-package.zip>');
+
+const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'sandbox-mcp-package-'));
+const unpacked = path.join(temp, 'unpacked');
+fs.mkdirSync(unpacked);
+const systemRoot = process.env.SystemRoot || 'C:\\Windows';
+const ps = path.join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+const expand = spawnSync(ps, [
+  '-NoProfile', '-NonInteractive', '-Command',
+  `Expand-Archive -LiteralPath '${path.resolve(archive).replaceAll("'", "''")}' -DestinationPath '${unpacked.replaceAll("'", "''")}' -Force`,
+], { encoding: 'utf8' });
+assert.equal(expand.status, 0, `Could not extract package: ${expand.stderr || expand.stdout}`);
+
+const node = path.join(unpacked, 'node.exe');
+const cli = path.join(unpacked, 'sbx.cmd');
+const packageMetadata = JSON.parse(fs.readFileSync(path.join(unpacked, 'package.json'), 'utf8'));
+assert.ok(fs.existsSync(node), 'Bundled Node.js runtime is missing.');
+assert.ok(fs.existsSync(path.join(unpacked, 'NODE-LICENSE.txt')), 'Node.js license is missing.');
+assert.ok(fs.existsSync(path.join(unpacked, 'agent', 'agent.ps1')), 'Guest agent is missing.');
+assert.ok(fs.existsSync(path.join(unpacked, 'skills', 'windows-sandbox-app-test', 'SKILL.md')), 'Agent skill is missing.');
+assert.ok(fs.existsSync(path.join(unpacked, 'node_modules', '@modelcontextprotocol', 'sdk', 'package.json')), 'MCP runtime dependencies are missing.');
+assert.ok(fs.existsSync(path.join(unpacked, 'docs', 'hello-after-test.png')), 'README image resource is missing.');
+
+const isolatedPath = [
+  path.join(systemRoot, 'System32'),
+  path.join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0'),
+].join(path.delimiter);
+const env = { ...process.env, PATH: isolatedPath };
+const cmd = path.join(systemRoot, 'System32', 'cmd.exe');
+const where = spawnSync(path.join(systemRoot, 'System32', 'where.exe'), ['node'], { env, encoding: 'utf8' });
+assert.equal(where.status, 1, `Host Node is still visible on the isolated PATH: ${where.stdout}`);
+const invokeCli = (...args) => spawnSync(cmd, ['/d', '/c', `sbx.cmd ${args.join(' ')}`], {
+  cwd: unpacked, env, encoding: 'utf8', timeout: 30_000,
+});
+
+const help = invokeCli('help');
+assert.equal(help.status, 0, `Packaged CLI help failed: ${help.stderr || help.stdout}`);
+assert.match(help.stdout, /Usage: sbx/);
+const version = invokeCli('version');
+assert.equal(version.status, 0, `Packaged CLI version failed: ${version.stderr || version.stdout}`);
+assert.equal(version.stdout.trim(), packageMetadata.version);
+
+const doctor = invokeCli('doctor', '--json');
+assert.ok([0, 1].includes(doctor.status), `Packaged doctor failed unexpectedly: ${doctor.stderr || doctor.stdout}`);
+const report = JSON.parse(doctor.stdout);
+assert.ok(Array.isArray(report.checks) && report.checks.length > 0, 'doctor --json did not return structured checks.');
+assert.equal(typeof report.ok, 'boolean');
+assert.equal(typeof report.facts.node, 'string', 'doctor did not report the bundled Node runtime.');
+assert.equal(doctor.status, report.ok ? 0 : 1, 'doctor exit code does not match readiness.');
+
+const server = spawn(node, ['src/server.js'], { cwd: unpacked, env, stdio: ['pipe', 'pipe', 'pipe'] });
+let stderr = '';
+server.stderr.setEncoding('utf8').on('data', (data) => { stderr += data; });
+const lines = createInterface({ input: server.stdout });
+const responses = new Map();
+let parseError;
+lines.on('line', (line) => {
+  try {
+    const message = JSON.parse(line);
+    if (message.id !== undefined) responses.set(message.id, message);
+  } catch (error) {
+    parseError = new Error(`MCP server wrote non-JSON data to stdout: ${line}`, { cause: error });
+  }
+});
+const send = (message) => server.stdin.write(`${JSON.stringify(message)}\n`);
+const response = async (id) => {
+  const until = Date.now() + 15_000;
+  while (Date.now() < until) {
+    if (parseError) throw parseError;
+    if (responses.has(id)) return responses.get(id);
+    if (server.exitCode !== null) throw new Error(`MCP server exited early (${server.exitCode}): ${stderr}`);
+    await delay(25);
+  }
+  throw new Error(`Timed out waiting for MCP response ${id}. stderr: ${stderr}`);
+};
+
+try {
+  send({
+    jsonrpc: '2.0', id: 1, method: 'initialize',
+    params: { protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 'package-smoke', version: '1.0.0' } },
+  });
+  const initialized = await response(1);
+  assert.ok(initialized.result?.serverInfo, 'MCP initialization did not return server information.');
+  send({ jsonrpc: '2.0', method: 'notifications/initialized' });
+  send({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} });
+  const tools = await response(2);
+  assert.ok(tools.result?.tools?.some((tool) => tool.name === 'sandbox_start'), 'MCP tools/list did not return sandbox_start.');
+  assert.ok(stderr.includes('ready'), 'MCP startup diagnostics were not sent to stderr.');
+  console.log('Portable package smoke test passed (CLI without Node on PATH, structured doctor, MCP stdio).');
+} finally {
+  server.stdin.end();
+  await Promise.race([
+    new Promise((resolve) => server.once('exit', resolve)),
+    delay(2_000),
+  ]);
+  if (server.exitCode === null) server.kill();
+  lines.close();
+  fs.rmSync(temp, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+}
