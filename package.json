@@ -1,6 +1,6 @@
 {
   "name": "sandbox-mcp",
-  "version": "0.9.0",
+  "version": "1.0.0",
   "description": "Fresh, throwaway Windows machines for testing your apps: an MCP server and CLI that automate Windows Sandbox",
   "main": "src/core.js",
   "type": "module",

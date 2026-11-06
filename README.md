@@ -107,6 +107,8 @@ Try the included sample (needs nothing but Windows; it compiles with the .NET Fr
 .\samples\HelloSandbox\build.ps1
 sbx run .\samples\HelloSandbox\bin --test .\samples\HelloSandbox\test.ps1   # passes
 sbx run .\samples\HelloSandbox\bin --args --crash                            # fails, and shows the crash
+sbx install-test .\samples\LeakyApp\install.ps1                              # an installer whose uninstaller forgets things
+sbx detonate .\samples\Suspicious\suspicious.ps1                             # a harmless script that acts like malware
 ```
 
 ### Use it from an agent (MCP)
