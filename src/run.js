@@ -39,7 +39,10 @@ export async function runApp(o) {
   }
   if (o.test && !fs.existsSync(o.test)) throw new Error(`Test script not found: ${o.test}`);
 
-  const appDir = `C:\\apps\\${exe.replace(/\.exe$/i, '')}`;
+  // Windows' own programs (charmap, mspaint, ...) are already in the guest: run them in place instead of copying System32.
+  const winDir = path.resolve(process.env.SystemRoot || 'C:\\Windows');
+  const builtIn = dir.toLowerCase() === winDir.toLowerCase() || dir.toLowerCase().startsWith(winDir.toLowerCase() + '\\');
+  const appDir = builtIn ? `C:\\Windows${dir.slice(winDir.length)}` : `C:\\apps\\${exe.replace(/\.exe$/i, '')}`;
   const exePath = `${appDir}\\${exe}`;
   const r = { app: exe, hostDir: dir, args: o.args || '', mode: o.console ? 'console' : 'gui', startedAt: new Date().toISOString(), shots: [], collected: [] };
   const t0 = Date.now();
@@ -49,8 +52,11 @@ export async function runApp(o) {
     booted = true;
     r.sandbox = { id: boot.id, network: boot.network, bootSeconds: boot.bootSeconds };
     r.runDir = boot.runDir; r.outDir = boot.outDir;
-    sbx.log(`copying ${dir} to ${appDir}`);
-    await sbx.copyIn(dir, appDir);
+    if (builtIn) sbx.log(`${exe} is part of Windows: running the sandbox's own copy`);
+    else {
+      sbx.log(`copying ${dir} to ${appDir}`);
+      await sbx.copyIn(dir, appDir);
+    }
     sbx.log(`running ${exe}${o.args ? ` ${o.args}` : ''}`);
 
     if (o.console) {
