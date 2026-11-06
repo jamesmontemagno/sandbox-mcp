@@ -1,0 +1,413 @@
+// Core Windows Sandbox driver shared by the MCP server (server.js) and the sbx CLI (cli.js).
+// Host side drives the wsb CLI; a small guest agent (agent/agent.ps1) runs in the sandbox's interactive session.
+// State for the one running sandbox lives in %LOCALAPPDATA%\sandbox-mcp\current.json so the CLI and MCP share it.
+import { execFile, spawn } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
+import net from 'node:net';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+export const VERSION = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version;
+export const HOME = process.env.SANDBOX_MCP_HOME || path.join(process.env.LOCALAPPDATA || process.cwd(), 'sandbox-mcp');
+export const GUEST = { agent: 'C:\\sbx\\agent', in: 'C:\\sbx\\in', out: 'C:\\sbx\\out' };
+const STATE_FILE = path.join(HOME, 'current.json');
+const AGENT_PORT = 5985;
+const IDLE_MINUTES = Number(process.env.SANDBOX_MCP_IDLE_MINUTES ?? 30);
+const ALLOWED_ROOTS = (process.env.SANDBOX_MCP_ALLOWED_ROOTS || '').split(';').map((s) => s.trim()).filter(Boolean);
+
+export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+export const log = (...a) => console.error('[sbx]', ...a);
+
+// ---------- wsb CLI ----------
+
+function wsb(args, timeoutMs = 120_000) {
+  return new Promise((resolve, reject) => {
+    execFile('wsb.exe', [...args, '--raw'], { timeout: timeoutMs, windowsHide: true }, (err, stdout, stderr) => {
+      const text = `${stdout}${stderr}`.trim();
+      try { return resolve(JSON.parse(stdout)); } catch {}
+      if (err?.code === 'ENOENT') return reject(new Error('wsb.exe not found. Install/update Windows Sandbox (Windows 11 24H2+) and launch it once from Start.'));
+      if (err || text) return reject(new Error(`wsb ${args[0]}: ${text || err.message}`));
+      resolve({});
+    });
+  });
+}
+
+export async function listSandboxes() {
+  return ((await wsb(['list'])).WindowsSandboxEnvironments || []).map((e) => e.Id);
+}
+
+async function getIp(id) {
+  try { return (await wsb(['ip', '--id', id])).Networks?.find((n) => n.IpV4Address)?.IpV4Address; } catch { return null; }
+}
+
+// Hardened by default: no clipboard, printer, microphone or camera redirection.
+function configXml({ memoryMB, networking = true, vGpu = true }) {
+  return '<Configuration>' +
+    (networking ? '' : '<Networking>Disable</Networking>') +
+    (vGpu ? '' : '<vGPU>Disable</vGPU>') +
+    '<ClipboardRedirection>Disable</ClipboardRedirection><PrinterRedirection>Disable</PrinterRedirection>' +
+    '<AudioInput>Disable</AudioInput><VideoInput>Disable</VideoInput><ProtectedClient>Enable</ProtectedClient>' +
+    (memoryMB ? `<MemoryInMB>${Math.round(memoryMB)}</MemoryInMB>` : '') +
+    '</Configuration>';
+}
+
+// ---------- state ----------
+
+let verifiedId = null;
+const readState = () => { try { return JSON.parse(fs.readFileSync(STATE_FILE, 'utf8')); } catch { return null; } };
+function writeState(s) {
+  fs.mkdirSync(HOME, { recursive: true });
+  if (s) fs.writeFileSync(STATE_FILE, JSON.stringify(s, null, 2)); else fs.rmSync(STATE_FILE, { force: true });
+}
+
+/** The sandbox started by sandbox-mcp/sbx, or null. Verified against `wsb list` once per id per process. */
+export async function current() {
+  const s = readState();
+  if (!s) { verifiedId = null; return null; }
+  if (s.id !== verifiedId) {
+    if (!(await listSandboxes()).includes(s.id)) { writeState(null); verifiedId = null; return null; }
+    verifiedId = s.id;
+  }
+  return s;
+}
+
+async function requireSandbox() {
+  const s = await current();
+  if (!s) throw new Error('No sandbox is running. Start one first (sandbox_start, or `sbx start`).');
+  return s;
+}
+
+function audit(s, entry) {
+  try { fs.appendFileSync(path.join(s.runDir, 'audit.jsonl'), JSON.stringify({ time: new Date().toISOString(), ...entry }) + '\n'); } catch {}
+}
+const brief = (o) => Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined)
+  .map(([k, v]) => [k, typeof v === 'string' && v.length > 300 ? `${v.slice(0, 300)}…` : v]));
+
+// ---------- guest agent channel ----------
+
+function agentCall(target, op, params = {}, timeoutMs = 60_000) {
+  if (target.transport === 'files') return fileCall(target, op, params, timeoutMs);
+  return new Promise((resolve, reject) => {
+    const sock = net.createConnection({ host: target.ip, port: target.port });
+    let buf = '';
+    sock.setEncoding('utf8');
+    sock.setTimeout(timeoutMs, () => sock.destroy(Object.assign(new Error(`agent '${op}' timed out after ${timeoutMs}ms`), { code: 'ETIMEDOUT' })));
+    sock.on('connect', () => sock.write(JSON.stringify({ token: target.token, op, ...params }) + '\n'));
+    sock.on('data', (d) => (buf += d));
+    sock.on('error', reject);
+    sock.on('end', () => {
+      let r;
+      try { r = JSON.parse(buf.trim()); } catch { return reject(new Error(`bad agent response: ${buf.slice(0, 500)}`)); }
+      r.ok ? resolve(r.result) : reject(new Error(r.error));
+    });
+  });
+}
+
+// Offline transport (Networking disabled): request files in the read-only "in" share, responses in the "out" share.
+// Both sides poll exact file names; direct-path reads through a share are near-instant, directory listings are not.
+async function fileCall(target, op, params, timeoutMs) {
+  const n = String(nextMailboxSeq(target)).padStart(6, '0');
+  const reqFile = path.join(target.runDir, 'in', 'mailbox', `req-${n}.json`);
+  const respFile = path.join(target.runDir, 'out', 'mailbox', `resp-${n}.json`);
+  fs.mkdirSync(path.dirname(reqFile), { recursive: true });
+  fs.writeFileSync(`${reqFile}.tmp`, JSON.stringify({ token: target.token, op, ...params }));
+  fs.renameSync(`${reqFile}.tmp`, reqFile);
+  // Tell the guest it exists (see the mailbox loop in agent.ps1 for why it doesn't just look for the file).
+  const seqFile = path.join(path.dirname(reqFile), 'seq.txt');
+  let seen = 0;
+  try { seen = Number(fs.readFileSync(seqFile, 'utf8')) || 0; } catch { }
+  if (Number(n) > seen) fs.writeFileSync(seqFile, String(Number(n)));
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (fs.existsSync(respFile)) {
+      let r;
+      try { r = JSON.parse(fs.readFileSync(respFile, 'utf8').replace(/^\uFEFF/, '')); } catch { await sleep(50); continue; }
+      fs.rmSync(respFile, { force: true }); fs.rmSync(reqFile, { force: true });
+      return r.ok ? r.result : Promise.reject(new Error(r.error));
+    }
+    await sleep(50);
+  }
+  throw Object.assign(new Error(`agent '${op}' timed out after ${timeoutMs}ms`), { code: 'ETIMEDOUT' });
+}
+
+function nextMailboxSeq(target) {
+  // Sequence is shared by every process talking to this sandbox (CLI and MCP), so keep it in the state file.
+  const s = readState() || target;
+  s.mailboxSeq = (s.mailboxSeq || 0) + 1;
+  if (readState()) writeState(s);
+  target.mailboxSeq = s.mailboxSeq;
+  return s.mailboxSeq;
+}
+
+async function call(op, params = {}, timeoutMs = 60_000) {
+  const s = await requireSandbox();
+  const t = Date.now();
+  try {
+    const r = await agentCall(s, op, params, timeoutMs);
+    audit(s, { op, params: brief(params), ms: Date.now() - t, ok: true });
+    return r;
+  } catch (e) {
+    audit(s, { op, params: brief(params), ms: Date.now() - t, ok: false, error: e.message });
+    if (e.code && !(await listSandboxes()).includes(s.id)) {
+      writeState(null); verifiedId = null;
+      throw new Error('The sandbox is no longer running (closed, crashed, or stopped by its idle timeout). Start a new one.');
+    }
+    throw e;
+  }
+}
+
+async function waitFor(fn, timeoutMs, what) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try { const v = await fn(); if (v) return v; } catch (e) { if (e.fatal) throw e; }
+    await sleep(1000);
+  }
+  throw new Error(`Timed out waiting for ${what}`);
+}
+
+function minimizeSandboxWindow() {
+  const ps = `Add-Type -Name U -Namespace W -MemberDefinition '[DllImport("user32.dll")] public static extern bool ShowWindow(System.IntPtr h,int c);';` +
+    `Get-Process WindowsSandboxRemoteSession -EA SilentlyContinue | ? MainWindowHandle -ne 0 | % { [W.U]::ShowWindow($_.MainWindowHandle,6) }`;
+  execFile('powershell.exe', ['-NoProfile', '-Command', ps], { windowsHide: true }, () => {});
+}
+
+// ---------- lifecycle ----------
+
+/**
+ * Boot a fresh sandbox and bring up the guest agent.
+ * network: 'on' (default), 'firewall' (guest firewall blocks outbound; agent over TCP), 'off' (no network adapter; agent over shared-folder mailbox).
+ */
+export async function startSandbox({ network = 'on', internet, memoryMB, window = 'normal', vGpu = true } = {}) {
+  if (internet === false && network === 'on') network = 'off';
+  if (!['on', 'firewall', 'off'].includes(network)) throw new Error(`network must be on, firewall or off (got ${network})`);
+  const existing = await listSandboxes();
+  if (existing.length) {
+    const ours = readState()?.id;
+    throw new Error(`A sandbox is already running (${existing.join(', ')}). Windows allows only one; ` +
+      (existing.includes(ours) ? 'stop it first (sandbox_stop / `sbx stop`).' : 'it was not started by sbx; close it or stop it with force.'));
+  }
+  const t0 = Date.now();
+  const stamp = new Date().toISOString().replace(/[-:]/g, '').replace('T', '-').slice(0, 15);
+  const runDir = path.join(HOME, 'runs', stamp);
+  for (const d of ['agent', 'in', 'out']) fs.mkdirSync(path.join(runDir, d), { recursive: true });
+  if (network === 'off') { fs.mkdirSync(path.join(runDir, 'in', 'mailbox')); fs.writeFileSync(path.join(runDir, 'in', 'mailbox', 'seq.txt'), '0'); }
+  const token = randomBytes(24).toString('hex');
+  for (const f of fs.readdirSync(path.join(ROOT, 'agent'))) fs.copyFileSync(path.join(ROOT, 'agent', f), path.join(runDir, 'agent', f));
+  fs.writeFileSync(path.join(runDir, 'agent', 'token.txt'), token);
+
+  const steps = [];
+  const step = (s) => { steps.push(`${((Date.now() - t0) / 1000).toFixed(1)}s ${s}`); log(s); };
+  log(`booting a fresh Windows Sandbox (network ${network})`);
+  const config = configXml({ memoryMB, networking: network !== 'off', vGpu });
+  const offline = network === 'off';
+
+  // A start issued right after a stop can silently die, so verify it stays up and retry once.
+  let id, ip;
+  for (let attempt = 1; attempt <= 2 && !ip; attempt++) {
+    id = (await wsb(['start', '--config', config])).Id;
+    step(`started ${id}`);
+    ip = await waitFor(async () => {
+      if (!(await listSandboxes()).includes(id)) throw Object.assign(new Error('sandbox exited during boot'), { fatal: true });
+      if (!offline) return getIp(id);
+      // No network adapter: readiness = the guest accepts exec.
+      return (await wsb(['exec', '--id', id, '-r', 'System', '-c', 'cmd /c exit 0'])).ExitCode === 0 && 'none';
+    }, 120_000, 'sandbox to boot').catch(async (e) => { if (attempt === 2) throw e; await sleep(5000); return null; });
+  }
+  step(offline ? 'booted (no network)' : `ip ${ip}`);
+
+  const target = {
+    id, ip: offline ? null : ip, port: AGENT_PORT, token, runDir, network, transport: offline ? 'files' : 'tcp',
+    startedAt: new Date().toISOString(), startedByPid: process.pid, seq: 0, mailboxSeq: 0, lastShot: null,
+  };
+  try {
+    await wsb(['share', '--id', id, '-f', path.join(runDir, 'agent'), '-s', GUEST.agent]);
+    await wsb(['share', '--id', id, '-f', path.join(runDir, 'in'), '-s', GUEST.in]);
+    await wsb(['share', '--id', id, '-f', path.join(runDir, 'out'), '-s', GUEST.out, '--allow-write']);
+    step('folders shared');
+
+    // An interactive user session only exists once a remote session is connected.
+    spawn('wsb.exe', ['connect', '--id', id], { detached: true, stdio: 'ignore', windowsHide: false }).unref();
+    await waitFor(async () => (await wsb(['exec', '--id', id, '-r', 'ExistingLogin', '-c', 'cmd /c exit 0'])).ExitCode === 0,
+      90_000, 'user logon session');
+    step('user session ready');
+    if (window === 'minimized') minimizeSandboxWindow();
+
+    if (network === 'on') {
+      await wsb(['exec', '--id', id, '-r', 'System', '-c', `netsh advfirewall firewall add rule name=sbx-agent dir=in action=allow protocol=TCP localport=${AGENT_PORT}`]);
+    } else if (network === 'firewall') {
+      // Block by default, and also disable every outbound allow rule: the platform ships "Container: allow outbound".
+      await wsb(['exec', '--id', id, '-r', 'System', '-c',
+        `cmd /c "netsh advfirewall firewall add rule name=sbx-agent dir=in action=allow protocol=TCP localport=${AGENT_PORT} && netsh advfirewall set allprofiles firewallpolicy blockinbound,blockoutbound && netsh advfirewall firewall set rule name=all dir=out new enable=no"`]);
+    }
+    const agentArgs = `-Port ${AGENT_PORT} -IdleMinutes ${IDLE_MINUTES}${offline ? ' -Mailbox' : ''}`;
+    await wsb(['exec', '--id', id, '-r', 'ExistingLogin', '-c',
+      `cmd /c start /min powershell -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File ${GUEST.agent}\\agent.ps1 ${agentArgs}`]);
+    writeState(target); verifiedId = id;
+    const hello = await waitFor(() => agentCall(target, 'ping', {}, 3000), 60_000, 'guest agent');
+    step(`agent up as ${hello.user}`);
+    const bootSeconds = (Date.now() - t0) / 1000;
+    audit(target, { op: 'start', network, memoryMB, bootSeconds, ok: true });
+    return { id, ip: target.ip, network, runDir, outDir: path.join(runDir, 'out'), user: hello.user, bootSeconds, steps };
+  } catch (e) {
+    writeState(null); verifiedId = null;
+    await wsb(['stop', '--id', id]).catch(() => {});
+    throw new Error(`${e.message}\nSteps:\n${steps.join('\n')}`);
+  }
+}
+
+export async function stopSandbox({ force = false } = {}) {
+  const mine = await current();
+  const running = await listSandboxes();
+  if (!mine && running.length && !force) {
+    throw new Error(`A sandbox not started by sbx is running (${running.join(', ')}). Use force to stop it.`);
+  }
+  const toStop = mine ? running.filter((x) => x === mine.id) : force ? running : [];
+  for (const id of toStop) await wsb(['stop', '--id', id]);
+  await waitFor(async () => (await listSandboxes()).length === 0, 30_000, 'sandbox to stop');
+  if (toStop.length) await sleep(3000); // let the host settle before the next start
+  const result = { stopped: toStop };
+  if (mine) {
+    audit(mine, { op: 'stop', ok: true });
+    fs.rmSync(path.join(mine.runDir, 'in'), { recursive: true, force: true });
+    const outDir = path.join(mine.runDir, 'out');
+    result.runDir = mine.runDir;
+    result.outDir = outDir;
+    result.artifacts = fs.existsSync(outDir)
+      ? fs.readdirSync(outDir, { recursive: true }).filter((f) => !f.endsWith('.preview.png') && !f.startsWith('mailbox'))
+      : [];
+  }
+  writeState(null); verifiedId = null;
+  return result;
+}
+
+/** Fire-and-forget stop that survives this process being killed (used when an MCP client disconnects). */
+export function stopDetached(id) {
+  spawn('wsb.exe', ['stop', '--id', id], { detached: true, stdio: 'ignore', windowsHide: true }).unref();
+  if (readState()?.id === id) writeState(null);
+  verifiedId = null;
+}
+
+export async function status() {
+  const s = await current();
+  if (!s) return { running: false, otherSandboxes: await listSandboxes() };
+  const agent = await agentCall(s, 'ping', {}, 5000).then(() => 'ok', (e) => e.message);
+  return { running: true, id: s.id, ip: s.ip, network: s.network, startedAt: s.startedAt, runDir: s.runDir, outDir: path.join(s.runDir, 'out'), agent };
+}
+
+// ---------- operations ----------
+
+function checkAllowed(p) {
+  if (!ALLOWED_ROOTS.length) return;
+  const real = fs.realpathSync.native(p).toLowerCase();
+  const ok = ALLOWED_ROOTS.some((r) => {
+    const root = (fs.existsSync(r) ? fs.realpathSync.native(r) : path.resolve(r)).toLowerCase().replace(/[\\/]+$/, '');
+    return real === root || real.startsWith(root + path.sep);
+  });
+  if (!ok) throw new Error(`${p} is outside SANDBOX_MCP_ALLOWED_ROOTS (${ALLOWED_ROOTS.join('; ')})`);
+}
+
+export async function copyIn(hostPath, sandboxPath) {
+  const s = await requireSandbox();
+  const src = path.resolve(hostPath);
+  if (!fs.existsSync(src)) throw new Error(`Host path not found: ${src}`);
+  checkAllowed(src);
+  const base = path.basename(src);
+  const st = readState() || s;
+  st.seq = (st.seq || 0) + 1; writeState(st);
+  const stage = `${st.seq}-${base}`; // fresh folder each time avoids the guest's stale directory cache
+  fs.cpSync(src, path.join(s.runDir, 'in', stage), { recursive: true });
+  return call('copy', { from: `${GUEST.in}\\${stage}`, to: sandboxPath || `C:\\apps\\${base}` }, 600_000);
+}
+
+export async function copyOut(sandboxPath, name) {
+  const s = await requireSandbox();
+  const n = (name || sandboxPath.split(/[\\/]/).filter(Boolean).pop() || 'item').replace(/[:*?"<>|]/g, '_');
+  const r = await call('copy', { from: sandboxPath, to: `${GUEST.out}\\files\\${n}` }, 600_000);
+  return { hostPath: path.join(s.runDir, 'out', 'files', n), files: r.files, bytes: r.bytes };
+}
+
+export async function exec({ command, shell, cwd, timeoutSec = 120 }) {
+  return call('exec', { command, shell, cwd, timeoutSec }, (timeoutSec + 30) * 1000);
+}
+
+export async function launch({ path: p, args, cwd, waitForWindowSec = 15 }) {
+  return call('launch', { path: p, args, cwd, waitForWindowSec }, (waitForWindowSec + 30) * 1000);
+}
+
+export async function processInfo(pid) { return call('process', { pid }); }
+
+export async function windows() { return [].concat((await call('windows')) ?? []); }
+
+export async function screenshot({ windowTitle, pid, name, maxWidth } = {}) {
+  const s = await requireSandbox();
+  const r = await call('screenshot', { windowTitle, pid, name, maxWidth });
+  const dir = path.join(s.runDir, 'out', 'screenshots');
+  const previewPath = path.join(dir, r.preview);
+  const preview = await waitFor(() => fs.existsSync(previewPath) && fs.readFileSync(previewPath), 10_000, 'screenshot file');
+  fs.rmSync(previewPath, { force: true });
+  const st = readState() || s;
+  st.lastShot = { scale: r.scale, left: r.left, top: r.top }; writeState(st);
+  return { path: path.join(dir, r.file), width: r.width, height: r.height, left: r.left, top: r.top,
+    previewBase64: preview.toString('base64'), previewWidth: r.previewWidth, previewHeight: r.previewHeight };
+}
+
+/** coordinates: 'screenshot' = pixels in the last screenshot preview image; 'screen' = raw sandbox screen pixels. */
+export async function click({ x, y, button, double, coordinates = 'screen' }) {
+  let sx = x, sy = y;
+  if (coordinates === 'screenshot') {
+    const shot = (await requireSandbox()).lastShot;
+    if (!shot) throw new Error('Take a screenshot first, or use screen coordinates.');
+    sx = Math.round(shot.left + x / shot.scale);
+    sy = Math.round(shot.top + y / shot.scale);
+  }
+  return call('click', { x: sx, y: sy, button, double });
+}
+
+export async function type({ keys, literal = true, windowTitle, pid }) {
+  return call('keys', { keys, literal, windowTitle, pid });
+}
+
+// UI Automation: inspect and drive controls by name instead of pixels.
+export async function uiTree({ windowTitle, pid, depth, maxNodes } = {}) {
+  return call('uitree', { windowTitle, pid, depth, maxNodes }, 120_000);
+}
+
+export async function uiAction({ windowTitle, pid, name, automationId, controlType, index, action = 'click', value }) {
+  return call('uiaction', { windowTitle, pid, name, automationId, controlType, index, action, value }, 60_000);
+}
+
+export async function waitForUi({ windowTitle, pid, name, automationId, controlType, timeoutSec = 30 }) {
+  return call('uiwait', { windowTitle, pid, name, automationId, controlType, timeoutSec }, (timeoutSec + 30) * 1000);
+}
+
+/** One line per element: `Button "Greet" #GreetButton {invoke}` — compact enough for an LLM to read. */
+export function formatUiNode(n, indent = true) {
+  const parts = [n.type || '?'];
+  if (n.name) parts.push(JSON.stringify(n.name));
+  if (n.automationId) parts.push('#' + n.automationId);
+  if (n.value !== undefined && n.value !== n.name && (n.value !== '' || /^(Edit|ComboBox|Document)$/.test(n.type))) parts.push('= ' + JSON.stringify(n.value));
+  if (n.toggled !== undefined) parts.push(n.toggled ? '[x]' : '[ ]');
+  if (n.selected) parts.push('(selected)');
+  if (n.enabled === false) parts.push('(disabled)');
+  if (n.actions?.length) parts.push('{' + n.actions.join(',') + '}');
+  return (indent ? '  '.repeat(n.depth || 0) : '') + parts.join(' ');
+}
+
+export function formatUiTree(t) {
+  const nodes = [].concat(t?.nodes ?? []);
+  return nodes.map((n) => formatUiNode(n)).join('\n') + (t?.truncated ? '\n… (truncated: raise maxNodes or lower depth, or target a window)' : '');
+}
+
+/** Application-log errors/crashes since a guest timestamp (ISO). */
+export async function appErrors(sinceIso) {
+  const since = sinceIso ? `[datetime]::Parse('${sinceIso}').AddSeconds(-2)` : '(Get-Date).AddHours(-1)';
+  const r = await exec({
+    command: `$e = Get-WinEvent -FilterHashtable @{LogName='Application'; Level=1,2; StartTime=${since}} -ErrorAction SilentlyContinue | ` +
+      `ForEach-Object { [pscustomobject]@{ time = $_.TimeCreated.ToString('o'); source = $_.ProviderName; id = $_.Id; message = $_.Message } }; ` +
+      `if ($e) { ConvertTo-Json @($e) -Depth 3 -Compress } else { '[]' }`,
+    timeoutSec: 60,
+  });
+  try { return [].concat(JSON.parse(r.stdout.trim() || '[]')); } catch { return []; }
+}

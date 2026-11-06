@@ -1,1 +1,4 @@
+node_modules/
 work/
+samples/*/bin/
+samples/*/obj/

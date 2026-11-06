@@ -1,0 +1,256 @@
+#!/usr/bin/env node
+// sbx: command-line front end for Windows Sandbox automation. Shares state with the MCP server, so you can
+// `sbx start` here, drive it from an agent, and `sbx stop` afterwards (or the other way around).
+import { spawn } from 'node:child_process';
+import * as sbx from './core.js';
+import { runApp, summary } from './run.js';
+
+const HELP = `sbx ${sbx.VERSION} - fresh, throwaway Windows machines for testing your apps (Windows Sandbox)
+
+Usage: sbx <command> [options]
+
+One shot
+  run <app.exe|folder> [options]     Boot a fresh sandbox, copy the app in, run it, screenshot it, check
+                                     for crashes, write a report, destroy the sandbox. Exit 0 = pass.
+      --exe <name>                   Which exe, when <folder> has several
+      --args "<args>"                Arguments for the app
+      --console                      Console app: run to completion and capture output
+      --wait <sec>                   Let a GUI app settle before observing (default 5)
+      --test <script.ps1>            Run a test script inside afterwards ($env:SBX_APP_PID, SBX_APP_DIR, SBX_OUT)
+      --collect <sandbox path>       Copy a file/folder back out afterwards (repeatable)
+      --keep                         Leave the sandbox running afterwards
+      --open                         Open the report when done
+
+Step by step
+  start [--network on|firewall|off] [--offline] [--memory <MB>] [--no-gpu] [--minimized]
+  status
+  push <host path> [sandbox path]    Copy a file/folder in (default C:\\apps\\<name>)
+  pull <sandbox path> [name]         Copy a file/folder out to the run's out\\files folder
+  exec [--cmd] [--cwd <dir>] [--timeout <sec>] <command...>
+                                     Run a command; prints its output and exits with its exit code
+  launch <exe> [--args "<args>"] [--cwd <dir>] [--wait <sec>]
+                                     Start a GUI app without waiting for it
+  proc <pid>                         Is it still running? exit code? window title?
+  windows                            List windows on the sandbox desktop
+  shot [--window <title>] [--pid <pid>] [--name <label>]
+                                     Screenshot the desktop or one window; prints the PNG path
+  click <x> <y> [--right] [--double] Click at sandbox screen pixels
+  type <text> [--keys] [--window <title>] [--pid <pid>]
+                                     Type text (--keys: SendKeys syntax like {ENTER} or ^s)
+  ui [tree] [--pid <pid>|--window <title>] [--depth <n>] [--max <n>]
+                                     Show the UI Automation tree: every control, its name, #id and actions
+  ui <action> [--name <text>] [--id <automationId>] [--type <Button|Edit|...>] [--index <n>] [--value <text>]
+                                     Act on a control: click, doubleclick, rightclick, set (--value), toggle,
+                                     select, expand, collapse, focus, read
+  ui wait [--name ...] [--id ...] [--type ...] [--timeout <sec>]
+                                     Wait for a control to appear (exit 1 on timeout)
+  errors [--since <iso time>]        Application event log errors (crashes, unhandled exceptions)
+  stop [--force]                     Destroy the sandbox (--force: also one not started by sbx)
+
+Other
+  mcp                                Run the MCP server on stdio
+  help | version
+  --json                             Machine-readable output for any command
+
+Network modes: on = normal internet; firewall = guest firewall blocks outbound (admin code could undo it);
+off = no network adapter at all, the strongest isolation (--offline is the same).
+Data: ${sbx.HOME}`;
+
+// Options that take a value; everything else starting with -- is a boolean flag.
+const VALUE_OPTS = new Set(['network', 'memory', 'exe', 'args', 'wait', 'test', 'collect', 'cwd', 'timeout', 'window', 'pid', 'name', 'since',
+  'id', 'type', 'index', 'value', 'depth', 'max']);
+
+function parse(argv) {
+  const pos = [], opt = { collect: [] };
+  let i = 0;
+  const restCommand = argv[0] === 'exec'; // exec: options only before the command; the rest is the command line
+  for (; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === '--') { pos.push(...argv.slice(i + 1)); break; }
+    if (a.startsWith('--') && a.length > 2) {
+      const [k, inline] = a.slice(2).split(/=(.*)/s);
+      if (VALUE_OPTS.has(k)) {
+        const v = inline ?? argv[++i];
+        if (v === undefined) throw new Error(`--${k} needs a value`);
+        if (k === 'collect') opt.collect.push(v); else opt[k] = v;
+      } else opt[k] = true;
+      continue;
+    }
+    pos.push(a);
+    if (restCommand && pos.length === 2) { pos.push(...argv.slice(i + 1)); break; }
+  }
+  return { cmd: pos[0], pos: pos.slice(1), opt };
+}
+
+const num = (v, what) => {
+  if (v === undefined) return undefined;
+  const n = Number(v);
+  if (!Number.isFinite(n)) throw new Error(`${what} must be a number (got ${v})`);
+  return n;
+};
+
+function out(opt, value, human) {
+  if (opt.json) console.log(JSON.stringify(value, null, 2));
+  else console.log(typeof human === 'function' ? human(value) : human ?? (typeof value === 'string' ? value : JSON.stringify(value, null, 2)));
+}
+
+function startOpts(opt) {
+  return {
+    network: opt.offline ? 'off' : opt.network ?? 'on',
+    memoryMB: num(opt.memory, '--memory'),
+    vGpu: !opt['no-gpu'],
+    window: opt.minimized ? 'minimized' : 'normal',
+  };
+}
+
+const table = (rows, cols) => {
+  if (!rows.length) return '(none)';
+  const w = cols.map((c) => Math.max(c.length, ...rows.map((r) => String(r[c] ?? '').length)));
+  const line = (vals) => vals.map((v, i) => String(v ?? '').padEnd(w[i])).join('  ').trimEnd();
+  return [line(cols), line(w.map((n) => '-'.repeat(n))), ...rows.map((r) => line(cols.map((c) => r[c])))].join('\n');
+};
+
+async function main(argv) {
+  const { cmd, pos, opt } = parse(argv);
+  const need = (n, usage) => { if (pos.length < n) throw new Error(`usage: sbx ${usage}`); };
+
+  switch (cmd) {
+    case undefined: case 'help': case '-h': case '--help':
+      console.log(HELP); return 0;
+    case 'version': case '-v': case '--version':
+      console.log(sbx.VERSION); return 0;
+
+    case 'mcp':
+      await import('./server.js');
+      return null; // keep running
+
+    case 'start':
+      out(opt, await sbx.startSandbox(startOpts(opt)), (r) =>
+        `Sandbox ${r.id} ready in ${r.bootSeconds.toFixed(1)}s (network ${r.network}). Artifacts: ${r.outDir}`);
+      return 0;
+
+    case 'status':
+      out(opt, await sbx.status(), (s) => s.running
+        ? `Running: ${s.id} (network ${s.network}, since ${s.startedAt}, agent ${s.agent})\nArtifacts: ${s.outDir}`
+        : `No sbx sandbox running.${s.otherSandboxes.length ? ` Other sandbox(es): ${s.otherSandboxes.join(', ')}` : ''}`);
+      return 0;
+
+    case 'stop':
+      out(opt, await sbx.stopSandbox({ force: !!opt.force }), (r) =>
+        r.stopped.length ? `Stopped ${r.stopped.join(', ')}.${r.outDir ? ` Artifacts: ${r.outDir}` : ''}` : 'Nothing to stop.');
+      return 0;
+
+    case 'push': {
+      need(1, 'push <host path> [sandbox path]');
+      out(opt, await sbx.copyIn(pos[0], pos[1]), (r) => `Copied ${r.files} file(s), ${r.bytes} bytes -> ${r.path}`);
+      return 0;
+    }
+
+    case 'pull': {
+      need(1, 'pull <sandbox path> [name]');
+      out(opt, await sbx.copyOut(pos[0], pos[1]), (r) => `Copied ${r.files} file(s), ${r.bytes} bytes -> ${r.hostPath}`);
+      return 0;
+    }
+
+    case 'exec': {
+      need(1, 'exec [--cmd] [--cwd <dir>] [--timeout <sec>] <command...>');
+      const r = await sbx.exec({ command: pos.join(' '), shell: opt.cmd ? 'cmd' : 'powershell', cwd: opt.cwd, timeoutSec: num(opt.timeout, '--timeout') });
+      if (opt.json) console.log(JSON.stringify(r, null, 2));
+      else {
+        if (r.stdout) process.stdout.write(r.stdout.endsWith('\n') ? r.stdout : `${r.stdout}\n`);
+        if (r.stderr) process.stderr.write(r.stderr.endsWith('\n') ? r.stderr : `${r.stderr}\n`);
+        if (r.timedOut) console.error(`sbx: timed out after ${r.durationMs}ms; process tree killed`);
+      }
+      return r.timedOut ? 124 : r.exitCode ?? 1;
+    }
+
+    case 'launch': {
+      need(1, 'launch <exe> [--args "<args>"] [--cwd <dir>] [--wait <sec>]');
+      out(opt, await sbx.launch({ path: pos[0], args: opt.args, cwd: opt.cwd, waitForWindowSec: num(opt.wait, '--wait') }), (r) =>
+        `Started pid ${r.pid}${r.windowTitle ? `, window "${r.windowTitle}"` : r.hasExited ? `, already exited (code ${r.exitCode})` : ', no window yet'}`);
+      return 0;
+    }
+
+    case 'proc': {
+      need(1, 'proc <pid>');
+      out(opt, await sbx.processInfo(num(pos[0], 'pid')), (r) =>
+        r.hasExited ? `pid ${r.pid} exited with code ${r.exitCode}` : `pid ${r.pid} running${r.windowTitle ? `, window "${r.windowTitle}"` : ''}`);
+      return 0;
+    }
+
+    case 'windows':
+      out(opt, await sbx.windows(), (w) => table(w, ['pid', 'process', 'title']));
+      return 0;
+
+    case 'shot': {
+      const r = await sbx.screenshot({ windowTitle: opt.window, pid: num(opt.pid, '--pid'), name: opt.name });
+      const { previewBase64, ...rest } = r;
+      out(opt, rest, `${r.path} (${r.width}x${r.height})`);
+      return 0;
+    }
+
+    case 'click': {
+      need(2, 'click <x> <y> [--right] [--double]');
+      out(opt, await sbx.click({ x: num(pos[0], 'x'), y: num(pos[1], 'y'), button: opt.right ? 'right' : 'left', double: !!opt.double }), 'ok');
+      return 0;
+    }
+
+    case 'type': {
+      need(1, 'type <text> [--keys] [--window <title>] [--pid <pid>]');
+      out(opt, await sbx.type({ keys: pos.join(' '), literal: !opt.keys, windowTitle: opt.window, pid: num(opt.pid, '--pid') }), 'ok');
+      return 0;
+    }
+
+    case 'ui': {
+      const sub = (pos[0] || 'tree').toLowerCase();
+      const target = { pid: num(opt.pid, '--pid'), windowTitle: opt.window };
+      const sel = { ...target, name: opt.name ?? (sub !== 'tree' ? pos.slice(1).join(' ') || undefined : undefined), automationId: opt.id, controlType: opt.type };
+      if (sub === 'tree') {
+        const t = await sbx.uiTree({ ...target, depth: num(opt.depth, '--depth'), maxNodes: num(opt.max, '--max') });
+        out(opt, t, sbx.formatUiTree(t) || '(no UI elements found)');
+      } else if (sub === 'wait') {
+        const r = await sbx.waitForUi({ ...sel, timeoutSec: num(opt.timeout, '--timeout') });
+        out(opt, r, `found after ${r.waitedMs}ms: ${sbx.formatUiNode(r, false)}`);
+      } else {
+        const action = sub === 'set' ? 'setvalue' : sub;
+        const r = await sbx.uiAction({ ...sel, index: num(opt.index, '--index'), action, value: opt.value });
+        out(opt, r, r.pending ? `${r.did}: pending - ${r.note}` : `${r.did}: ${sbx.formatUiNode(r, false)}${r.matches > 1 ? ` (1 of ${r.matches} matches)` : ''}`);
+      }
+      return 0;
+    }
+
+    case 'errors': {
+      const e = await sbx.appErrors(opt.since);
+      out(opt, e, () => e.length ? e.map((x) => `${x.time}  ${x.source} (${x.id})\n${x.message}\n`).join('\n') : 'No application errors.');
+      return 0;
+    }
+
+    case 'run': {
+      need(1, 'run <app.exe|folder> [--exe <name>] [--args "..."] [--console] [--test <script.ps1>] [--collect <path>]... [--keep]');
+      const r = await runApp({
+        app: pos[0], exe: opt.exe, args: opt.args, console: !!opt.console, waitSec: num(opt.wait, '--wait'),
+        test: opt.test, collect: opt.collect, keep: !!opt.keep, timeoutSec: num(opt.timeout, '--timeout'), ...startOpts(opt),
+      });
+      if (opt.json) console.log(JSON.stringify({ ...r, shots: r.shots.map(({ previewBase64, ...s }) => s) }, null, 2));
+      else {
+        console.log(summary(r));
+        if (r.console?.stdout) console.log(`--- output ---\n${r.console.stdout.trimEnd()}`);
+        if (r.test && r.test.exitCode !== 0) console.log(`--- test ${r.test.script} ---\n${[r.test.stdout, r.test.stderr].filter(Boolean).join('\n').trimEnd()}`);
+        if (r.kept) console.log('Sandbox left running; `sbx stop` when done.');
+      }
+      if (opt.open && r.reportPath) spawn('cmd.exe', ['/c', 'start', '', r.reportPath], { detached: true, stdio: 'ignore', windowsHide: true }).unref();
+      return r.pass ? 0 : 1;
+    }
+
+    default:
+      throw new Error(`Unknown command '${cmd}'. Try: sbx help`);
+  }
+}
+
+try {
+  const code = await main(process.argv.slice(2));
+  if (code !== null) process.exitCode = code;
+} catch (e) {
+  console.error(`sbx: ${e.message}`);
+  process.exitCode = 1;
+}

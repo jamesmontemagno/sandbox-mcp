@@ -1,0 +1,267 @@
+#!/usr/bin/env node
+// sandbox-mcp: MCP server that drives Windows Sandbox (one fresh, ephemeral sandbox at a time).
+// All the real work lives in core.js (shared with the `sbx` CLI); this file only maps it to MCP tools.
+import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { z } from 'zod';
+import * as sbx from './core.js';
+import { runApp } from './run.js';
+
+const text = (v) => ({ content: [{ type: 'text', text: typeof v === 'string' ? v : JSON.stringify(v, null, 2) }] });
+const image = (base64, caption) => ({ content: [{ type: 'image', data: base64, mimeType: 'image/png' }, { type: 'text', text: caption }] });
+const tool = (fn) => async (args) => {
+  try { return await fn(args); } catch (e) { return { ...text(`Error: ${e.message}`), isError: true }; }
+};
+const cap = (s, n = 60_000) => (s && s.length > n ? `…[truncated ${s.length - n} chars]…\n${s.slice(-n)}` : s || '');
+const network = z.enum(['on', 'firewall', 'off']).optional().describe(
+  'on (default): normal internet. firewall: guest firewall blocks outbound (code running as admin could undo it). ' +
+  'off: no network adapter at all (strongest isolation; the agent talks over shared folders, a bit slower).');
+
+// The sandbox this server process started, stopped automatically when the MCP client goes away.
+let startedId = null;
+const server = new McpServer({ name: 'sandbox-mcp', version: sbx.VERSION });
+
+server.registerTool('sandbox_start', {
+  title: 'Start Windows Sandbox',
+  description: 'Boot a fresh, ephemeral Windows Sandbox (clean Windows install, elevated admin user) and connect the guest agent. ' +
+    'Only one sandbox can exist at a time; everything inside is destroyed by sandbox_stop. Takes ~20-40s. ' +
+    'Host-side artifacts (screenshots, copied-out files, audit log) stay in runDir after the sandbox is gone.',
+  inputSchema: {
+    network,
+    internet: z.boolean().optional().describe('Deprecated: false is the same as network="off".'),
+    memoryMB: z.number().int().min(2048).optional().describe('Memory for the sandbox in MB.'),
+    vGpu: z.boolean().optional().describe('GPU acceleration (default true). false = software rendering, smaller attack surface.'),
+    window: z.enum(['normal', 'minimized']).optional().describe('Sandbox window state on the host (default normal, so you can watch).'),
+  },
+}, tool(async (a) => {
+  const r = await sbx.startSandbox(a);
+  startedId = r.id;
+  return text(r);
+}));
+
+server.registerTool('sandbox_status', {
+  title: 'Sandbox status',
+  description: 'Show the current sandbox (id, network mode, run folder) and whether the guest agent responds.',
+  inputSchema: {},
+}, tool(async () => text(await sbx.status())));
+
+server.registerTool('sandbox_stop', {
+  title: 'Stop Windows Sandbox',
+  description: 'Stop and destroy the sandbox. Returns the host folder holding artifacts (screenshots, copied-out files).',
+  inputSchema: { force: z.boolean().optional().describe('Also stop a sandbox not started by sandbox-mcp.') },
+}, tool(async (a) => {
+  const r = await sbx.stopSandbox(a);
+  startedId = null;
+  return text(r);
+}));
+
+server.registerTool('sandbox_copy_in', {
+  title: 'Copy into sandbox',
+  description: 'Copy a host file or folder (e.g. your build output) onto the sandbox local disk.',
+  inputSchema: {
+    hostPath: z.string().describe('Absolute host path to a file or folder.'),
+    sandboxPath: z.string().optional().describe('Destination path inside the sandbox (default C:\\apps\\<name>).'),
+  },
+}, tool(async ({ hostPath, sandboxPath }) => text(await sbx.copyIn(hostPath, sandboxPath))));
+
+server.registerTool('sandbox_copy_out', {
+  title: 'Copy out of sandbox',
+  description: 'Copy a file or folder from the sandbox back to the host (into the run outDir/files). Returns the host path.',
+  inputSchema: {
+    sandboxPath: z.string().describe('Path inside the sandbox.'),
+    name: z.string().optional().describe('Name for the copy under outDir/files (default: source name).'),
+  },
+}, tool(async ({ sandboxPath, name }) => text(await sbx.copyOut(sandboxPath, name))));
+
+server.registerTool('sandbox_exec', {
+  title: 'Run command in sandbox',
+  description: 'Run a command in the sandbox (elevated admin user session) and wait for it. Returns stdout, stderr and exit code. ' +
+    'Use sandbox_launch for GUI apps or anything long-running. The sandbox has Windows PowerShell 5.1 and .NET Framework 4, ' +
+    'but no Store apps (no Notepad, Calculator, Terminal) and no winget.',
+  inputSchema: {
+    command: z.string(),
+    shell: z.enum(['powershell', 'cmd']).optional().describe('Default powershell (Windows PowerShell 5.1).'),
+    cwd: z.string().optional(),
+    timeoutSec: z.number().positive().optional().describe('Default 120. The process tree is killed on timeout.'),
+  },
+}, tool(async (a) => {
+  const r = await sbx.exec(a);
+  const body = [`exitCode: ${r.timedOut ? 'TIMED OUT' : r.exitCode}  (${r.durationMs}ms)`,
+    r.stdout && `--- stdout ---\n${cap(r.stdout)}`, r.stderr && `--- stderr ---\n${cap(r.stderr)}`].filter(Boolean).join('\n');
+  return { ...text(body), isError: r.timedOut || r.exitCode !== 0 };
+}));
+
+server.registerTool('sandbox_launch', {
+  title: 'Launch app in sandbox',
+  description: 'Start a program (e.g. a GUI app) on the sandbox desktop without waiting for it to exit. Returns its pid.',
+  inputSchema: {
+    path: z.string().describe('Executable path inside the sandbox, e.g. C:\\apps\\MyApp\\MyApp.exe'),
+    args: z.string().optional(),
+    cwd: z.string().optional(),
+    waitForWindowSec: z.number().min(0).optional().describe('Wait up to N seconds for a main window (default 15).'),
+  },
+}, tool(async (a) => text(await sbx.launch(a))));
+
+server.registerTool('sandbox_process', {
+  title: 'Check launched process',
+  description: 'Is a process started with sandbox_launch still running? Returns hasExited, exitCode and its main window title.',
+  inputSchema: { pid: z.number().int() },
+}, tool(async ({ pid }) => text(await sbx.processInfo(pid))));
+
+server.registerTool('sandbox_windows', {
+  title: 'List sandbox windows',
+  description: 'List top-level windows on the sandbox desktop (pid, process, title, screen rect).',
+  inputSchema: {},
+}, tool(async () => text(await sbx.windows())));
+
+server.registerTool('sandbox_screenshot', {
+  title: 'Screenshot sandbox',
+  description: 'Capture the sandbox desktop, or one window by title/pid. Returns a preview image; the full-resolution PNG is saved ' +
+    'on the host. sandbox_click coordinates refer to this image by default.',
+  inputSchema: {
+    windowTitle: z.string().optional().describe('Capture only the first window whose title contains this text.'),
+    pid: z.number().int().optional().describe('Capture only the main window of this process.'),
+    name: z.string().optional().describe('Label used in the saved file name.'),
+    maxWidth: z.number().int().min(200).max(4000).optional().describe('Preview width (default 1280).'),
+  },
+}, tool(async (a) => {
+  const s = await sbx.screenshot(a);
+  return image(s.previewBase64, `Saved ${s.path} (${s.width}x${s.height}); preview ${s.previewWidth}x${s.previewHeight}.`);
+}));
+
+server.registerTool('sandbox_click', {
+  title: 'Click in sandbox',
+  description: 'Click at a point. By default x/y are pixel coordinates in the most recent sandbox_screenshot image. ' +
+    'Prefer sandbox_ui_action when the target control has a name: it is more reliable than pixels.',
+  inputSchema: {
+    x: z.number(), y: z.number(),
+    button: z.enum(['left', 'right']).optional(),
+    double: z.boolean().optional(),
+    coordinates: z.enum(['screenshot', 'screen']).optional().describe('screenshot (default) or raw sandbox screen pixels.'),
+  },
+}, tool(async ({ coordinates = 'screenshot', ...a }) => text(await sbx.click({ ...a, coordinates }))));
+
+server.registerTool('sandbox_type', {
+  title: 'Send keys in sandbox',
+  description: 'Type text or send key chords to the focused window (or a window found by title/pid, which is focused first). ' +
+    'With literal=false, uses SendKeys syntax: {ENTER}, {TAB}, ^s (Ctrl+S), %{F4} (Alt+F4).',
+  inputSchema: {
+    keys: z.string(),
+    literal: z.boolean().optional().describe('Treat keys as plain text (default true).'),
+    windowTitle: z.string().optional(),
+    pid: z.number().int().optional(),
+  },
+}, tool(async (a) => text(await sbx.type(a))));
+
+const target = {
+  pid: z.number().int().optional().describe('Process whose windows to search (from sandbox_launch).'),
+  windowTitle: z.string().optional().describe('Or: a window whose title contains this text.'),
+};
+const selector = {
+  name: z.string().optional().describe('Element name (visible label), exact match; falls back to contains.'),
+  automationId: z.string().optional().describe('AutomationId (control name in WinForms/WPF), exact match.'),
+  controlType: z.string().optional().describe('Button, Edit, CheckBox, ComboBox, ListItem, MenuItem, TabItem, Text, ...'),
+};
+
+server.registerTool('sandbox_ui_tree', {
+  title: 'UI Automation tree',
+  description: 'Read the accessibility (UI Automation) tree of an app in the sandbox: one line per control with type, "name", ' +
+    '#automationId, = value, [x] toggle state and {available actions}. Much cheaper and more precise than a screenshot ' +
+    'for finding controls. Without pid/windowTitle it reads every top-level window (can be large).',
+  inputSchema: {
+    ...target,
+    depth: z.number().int().min(1).max(50).optional().describe('Max depth (default 12).'),
+    maxNodes: z.number().int().min(10).max(5000).optional().describe('Max elements (default 400).'),
+    json: z.boolean().optional().describe('Return raw JSON (with screen rects) instead of the outline.'),
+  },
+}, tool(async ({ json, ...a }) => {
+  const t = await sbx.uiTree(a);
+  return text(json ? t : sbx.formatUiTree(t) || '(no UI elements found)');
+}));
+
+server.registerTool('sandbox_ui_action', {
+  title: 'Act on a UI control',
+  description: 'Find a control by name / automationId / controlType (any combination) and act on it through UI Automation: ' +
+    'click (Invoke, Toggle, Select or ExpandCollapse as appropriate, else a real mouse click), doubleclick, rightclick, ' +
+    'setvalue (type into an edit box), toggle, select, expand, collapse, focus, or read (just return its state). ' +
+    'Use sandbox_ui_tree first to see names. If a click opens a modal dialog the result is {pending:true}; that is fine.',
+  inputSchema: {
+    ...target, ...selector,
+    index: z.number().int().min(0).optional().describe('Which match to use when several match (default 0).'),
+    action: z.enum(['click', 'doubleclick', 'rightclick', 'setvalue', 'toggle', 'select', 'expand', 'collapse', 'focus', 'read'])
+      .optional().describe('Default click.'),
+    value: z.string().optional().describe('Text for setvalue.'),
+  },
+}, tool(async (a) => {
+  const r = await sbx.uiAction(a);
+  return text(r.pending ? r : `${r.did}: ${sbx.formatUiNode(r, false)}${r.matches > 1 ? ` (1 of ${r.matches} matches)` : ''}`);
+}));
+
+server.registerTool('sandbox_ui_wait', {
+  title: 'Wait for a UI control',
+  description: 'Wait until a control matching name / automationId / controlType appears (e.g. a result label, a dialog, a ' +
+    'finished state). Returns the element, or an error after timeoutSec.',
+  inputSchema: { ...target, ...selector, timeoutSec: z.number().min(1).max(600).optional().describe('Default 30.') },
+}, tool(async (a) => {
+  const r = await sbx.waitForUi(a);
+  return text(`found after ${r.waitedMs}ms: ${sbx.formatUiNode(r, false)}`);
+}));
+
+server.registerTool('sandbox_app_errors', {
+  title: 'Application errors in sandbox',
+  description: 'Error and critical events from the sandbox Application event log (crashes, .NET unhandled exceptions, side-by-side errors).',
+  inputSchema: { since: z.string().optional().describe('ISO time (e.g. launchedAt from sandbox_launch). Default: last hour.') },
+}, tool(async ({ since }) => text(await sbx.appErrors(since))));
+
+server.registerTool('sandbox_run', {
+  title: 'Test an app in a fresh sandbox',
+  description: 'One shot: boot a fresh sandbox, copy the app folder in, run it, screenshot it, check for crashes, optionally run a ' +
+    'PowerShell test script inside, copy files out, destroy the sandbox and write report.md. Use this for "does my build work on a ' +
+    'clean Windows machine?". Fails if a sandbox is already running.',
+  inputSchema: {
+    app: z.string().describe('Host path to the .exe (its whole folder is copied) or to the app folder.'),
+    exe: z.string().optional().describe('Exe name when app is a folder with more than one .exe.'),
+    args: z.string().optional(),
+    console: z.boolean().optional().describe('Console app: run to completion and capture stdout instead of launching a window.'),
+    waitSec: z.number().min(0).optional().describe('GUI apps: seconds to let the app settle before observing (default 5).'),
+    test: z.string().optional().describe('Host path to a .ps1 run inside after launch. Gets $env:SBX_APP_PID, SBX_APP_DIR, SBX_APP_EXE, SBX_OUT. Non-zero exit = fail.'),
+    collect: z.array(z.string()).optional().describe('Sandbox paths to copy back to the host afterwards (logs, output files).'),
+    keep: z.boolean().optional().describe('Leave the sandbox running afterwards for more poking.'),
+    network,
+    memoryMB: z.number().int().min(2048).optional(),
+    window: z.enum(['normal', 'minimized']).optional(),
+  },
+}, tool(async (a) => {
+  const r = await runApp(a);
+  if (r.kept) startedId = r.sandbox.id;
+  const summary = [
+    `${r.pass ? 'PASS' : 'FAIL'}: ${r.app}${r.failures.length ? ` (${r.failures.join('; ')})` : ''}`,
+    `Report: ${r.reportPath ?? '(none)'}`,
+    r.console && `--- console stdout ---\n${cap(r.console.stdout, 20_000)}`,
+    r.test && `--- test ${r.test.script}: exit ${r.test.exitCode} ---\n${cap(r.test.stdout, 20_000)}${r.test.stderr ? `\n--- test stderr ---\n${cap(r.test.stderr, 10_000)}` : ''}`,
+    r.crashes.length && `--- crash events ---\n${r.crashes.map((e) => `${e.source} ${e.id}: ${e.message}`).join('\n\n')}`,
+    `Took ${r.seconds.toFixed(1)}s; sandbox ${r.kept ? 'still running' : 'destroyed'}.`,
+  ].filter(Boolean).join('\n');
+  const shot = r.shots.find((s) => s.name === 'app') ?? r.shots.at(-1);
+  const content = [{ type: 'text', text: summary }];
+  if (shot) content.push({ type: 'image', data: shot.previewBase64, mimeType: 'image/png' });
+  return { content, isError: !r.pass };
+}));
+
+// Lifecycle: a sandbox started by this server should not outlive the client that asked for it.
+let exiting = false;
+function shutdown(why) {
+  if (exiting) return;
+  exiting = true;
+  if (startedId && process.env.SANDBOX_MCP_KEEP_ON_EXIT !== '1') {
+    sbx.log(`${why}: stopping sandbox ${startedId}`);
+    try { sbx.stopDetached(startedId); } catch {}
+  }
+  setTimeout(() => process.exit(0), 100);
+}
+process.stdin.on('end', () => shutdown('client disconnected'));
+process.stdin.on('close', () => shutdown('client disconnected'));
+for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP', 'SIGBREAK']) process.on(sig, () => shutdown(sig));
+
+await server.connect(new StdioServerTransport());
+sbx.log(`sandbox-mcp ${sbx.VERSION} ready; home=${sbx.HOME}`);

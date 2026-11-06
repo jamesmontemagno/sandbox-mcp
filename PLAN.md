@@ -62,7 +62,20 @@ Agent ──MCP(stdio)──► sandbox-mcp (host)
   env vars + guest firewall rules — v2.
 - Guest firewall: spike disabled it entirely; v1 should open just the agent port.
 
-## Next steps
+## Status (v1 work, 2026-11-06)
+
+Steps 1-3 and 5 below are done and shipped as the MCP server + `sbx` CLI (see README.md). What changed from this plan:
+
+- The guest agent is one persistent PowerShell process (TCP, or a shared-folder mailbox when there's no network), not a
+  per-call `powershell.exe`. exec ~1.6 s, file-mailbox round trip ~100 ms.
+- The focus moved from "dev VM" to "test my app on a clean machine": `sbx run`, screenshots, native UI Automation,
+  crash detection, reports.
+- No `sandbox_install` / toolchain caching yet (step 4).
+
+Roadmap: installer change tracking (files/registry/services before vs after), detonation mode for untrusted files,
+recorded runs/video, toolchain cache.
+
+## Next steps (original)
 
 1. ~~Upgrade to the Store Sandbox and re-test with `wsb`~~ ✅ done — headless lifecycle confirmed.
 2. Replace per-call `powershell.exe` with a persistent runspace HTTP server (measure latency).
