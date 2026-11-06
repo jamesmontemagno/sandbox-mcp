@@ -8,7 +8,7 @@ run commands with real stdout/exit codes, and throw it away — "devvm for Windo
 | API | Status on this box | Notes |
 |---|---|---|
 | `.wsb` config file (`WindowsSandbox.exe x.wsb`) | ✅ works | MappedFolders, LogonCommand, Networking, vGPU, Memory. One sandbox at a time. |
-| `wsb.exe` CLI (`start/list/exec/stop/share/connect/ip`, `--raw` JSON) | ❌ not installed | Ships with the **Store** version of Sandbox (24H2+). Launch Sandbox from Start once to auto-upgrade. |
+| `wsb.exe` CLI (`start/list/exec/stop/share/connect/ip`, `--raw` JSON) | ✅ after upgrade | Ships with the **Store** version of Sandbox (24H2+). Launch Sandbox from Start once to auto-upgrade. |
 | `wsb exec` | — | **No stdout/stderr capture** (documented). `-r System` avoids needing an RDP session. |
 | COM / WMI | none public | The CLI is the only supported control plane. |
 
@@ -20,6 +20,14 @@ run commands with real stdout/exit codes, and throw it away — "devvm for Windo
    But **10–20 s per job** (mapped-folder change visibility latency). Fine for bootstrapping, bad for interactive.
 3. **TCP channel** (`tcpserver.ps1` on :5985, host → sandbox IP): **~2 s per call**, almost all of it is
    spawning `powershell.exe` per command. An in-process/runspace server should get to ~tens of ms.
+
+4. **Store Sandbox + `wsb` 0.8.107.0 (installed via WindowsApps alias)** — fully headless, no window:
+   - `wsb start --raw` → `{"Id": ...}` in ~3 s (returns before guest is ready; poll `wsb ip`).
+   - `wsb ip --raw` → `Networks[0].IpV4Address`; `wsb share` mounts folders into a *running* sandbox (no `.wsb` needed).
+   - `wsb exec -r System` works with no logon/RDP session, ~0.7 s, returns `ExitCode` only.
+   - Bootstrap = `share` agent folder → `exec -r System` start agent → TCP: agent reachable ~30 s after start.
+   - Gotchas: only one sandbox (`CO_E_APPSINGLEUSE` if one is already running); a `start` immediately
+     after `stop` silently died — add a settle delay / verify with `wsb list`.
 
 ## Architecture
 
@@ -56,7 +64,7 @@ Agent ──MCP(stdio)──► sandbox-mcp (host)
 
 ## Next steps
 
-1. Upgrade to the Store Sandbox and re-test with `wsb start/exec/ip --raw`.
+1. ~~Upgrade to the Store Sandbox and re-test with `wsb`~~ ✅ done — headless lifecycle confirmed.
 2. Replace per-call `powershell.exe` with a persistent runspace HTTP server (measure latency).
 3. Build the MCP server (C#/.NET or Node), tools above, against the `wsb` CLI with `.wsb` fallback.
 4. Toolchain cache experiment: time to get git + node + dotnet working from a mapped cache.
