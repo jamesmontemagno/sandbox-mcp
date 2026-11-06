@@ -5,6 +5,7 @@ import { spawn } from 'node:child_process';
 import * as sbx from './core.js';
 import { runApp, summary } from './run.js';
 import { installTest, installSummary } from './install.js';
+import { detonate, detonateSummary } from './detonate.js';
 
 const HELP = `sbx ${sbx.VERSION} - fresh, throwaway Windows machines for testing your apps (Windows Sandbox)
 
@@ -34,6 +35,17 @@ One shot
       --fail-on-leftovers            Fail if the uninstall leaves anything behind
       --exclude <path>               Ignore a noisy file or registry path (repeatable)
       --keep, --open                 As for run
+
+  detonate <file> [options]          Run a file you don't trust and watch what it does: every process it starts
+                                     (with command lines), names it looks up, connections it tries, files,
+                                     registry, autoruns, services and scheduled tasks it changes, screenshots.
+                                     Network is off unless you say otherwise. Exit 0 = observed (not "safe").
+      --args "<args>"                Arguments for the file
+      --network off|firewall|on      off (default): no adapter. firewall: see the addresses it tries (blocked).
+      --duration <sec>               Watch for at most this long (default 60)
+      --full                         Watch the whole time, even after everything it started has exited
+      --every <sec>                  Screenshot interval (default 15)
+      --exclude <path>, --keep, --open
 
 Step by step
   start [--network on|firewall|off] [--offline] [--memory <MB>] [--no-gpu] [--minimized]
@@ -75,7 +87,7 @@ Data: ${sbx.HOME}`;
 
 // Options that take a value; everything else starting with -- is a boolean flag.
 const VALUE_OPTS = new Set(['network', 'memory', 'exe', 'args', 'wait', 'test', 'collect', 'cwd', 'timeout', 'window', 'pid', 'name', 'since',
-  'id', 'type', 'index', 'value', 'depth', 'max', 'uninstall', 'uninstall-args', 'exclude']);
+  'id', 'type', 'index', 'value', 'depth', 'max', 'uninstall', 'uninstall-args', 'exclude', 'duration', 'every']);
 const REPEAT_OPTS = new Set(['collect', 'exclude']);
 
 function parse(argv) {
@@ -271,6 +283,22 @@ async function main(argv) {
       }
       if (opt.open && r.reportPath) spawn('cmd.exe', ['/c', 'start', '', r.reportPath], { detached: true, stdio: 'ignore', windowsHide: true }).unref();
       return r.pass ? 0 : 1;
+    }
+
+    case 'detonate': {
+      need(1, 'detonate <file> [--args "..."] [--network off|firewall|on] [--duration <sec>] [--full] [--keep]');
+      const s = startOpts(opt);
+      const r = await detonate({
+        file: pos[0], args: opt.args, durationSec: num(opt.duration, '--duration'), full: !!opt.full, shotEverySec: num(opt.every, '--every'),
+        exclude: opt.exclude, max: num(opt.max, '--max'), keep: !!opt.keep, ...s, network: opt.offline ? 'off' : opt.network ?? 'off',
+      });
+      if (opt.json) console.log(JSON.stringify({ ...r, shots: r.shots.map(({ previewBase64, ...x }) => x) }, null, 2));
+      else {
+        console.log(detonateSummary(r));
+        if (r.kept) console.log('Sandbox left running; `sbx stop` when done.');
+      }
+      if (opt.open && r.reportPath) spawn('cmd.exe', ['/c', 'start', '', r.reportPath], { detached: true, stdio: 'ignore', windowsHide: true }).unref();
+      return r.error ? 1 : 0;
     }
 
     case 'run': {

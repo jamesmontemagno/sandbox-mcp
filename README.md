@@ -75,6 +75,9 @@ install, launch and work on a clean PC, and what does it look like?"* as quickly
   without the agent touching your real desktop.
 - **Run things with no network at all:** `--network off` boots the sandbox with no network adapter. Control still
   works (through a shared folder), so you can watch an app's offline behavior or open something you don't trust.
+- **See what a file you don't trust actually does:** `sbx detonate invoice.js` runs it in a sandbox with no network
+  and reports every process it started (with command lines), the names it looked up, the addresses it tried, and the
+  autoruns, scheduled tasks, services and files it planted. Then the whole machine is deleted.
 - **Collect evidence:** every run keeps screenshots, copied-out files, a markdown report and an audit log on the
   host after the sandbox is gone.
 
@@ -153,6 +156,7 @@ teaches agents the workflow; copy it into your agent's skills folder (for exampl
 | `sandbox_ui_wait` | Wait for a control (a result, a dialog) to appear. |
 | `sandbox_app_errors` | Application event log errors: crashes, hangs, .NET unhandled exceptions. |
 | `sandbox_install_test` | The installer loop in one call: snapshot, install, snapshot, optional test, uninstall, snapshot, report what was added and left behind. |
+| `sandbox_detonate` | Run an untrusted file (no network by default) and report its processes, lookups, connections, persistence and changes. |
 | `sandbox_snapshot` | Record files, registry, services, autoruns and installed programs under a name. |
 | `sandbox_diff` | Compare two snapshots: what changed in between. |
 
@@ -163,6 +167,7 @@ sbx run <app.exe|folder> [--exe <name>] [--args "<args>"] [--console] [--wait <s
                          [--test <script.ps1>] [--collect <sandbox path>]... [--keep] [--open]
 sbx install-test <setup.msi|.exe|.ps1|.cmd> [--args "/S"] [--uninstall auto|none|"<cmd>"]
                          [--uninstall-args "/S"] [--test <script.ps1>] [--fail-on-leftovers] [--exclude <path>]...
+sbx detonate <file> [--args "<args>"] [--network off|firewall|on] [--duration <sec>] [--full] [--every <sec>]
 
 sbx start [--network on|firewall|off] [--memory <MB>] [--no-gpu] [--minimized]
 sbx push <host path> [sandbox path]          sbx pull <sandbox path> [name]
@@ -249,13 +254,67 @@ Registry:  HKLM\SOFTWARE\LeakyApp
 The same snapshots are available step by step: `sbx snapshot before`, do anything, `sbx snapshot after`,
 `sbx diff before after` (or the `sandbox_snapshot` / `sandbox_diff` tools).
 
+## Detonate: what does this file actually do?
+
+Someone sent you `invoice.js`, a "driver update", a script from a forum. `sbx detonate` runs it the way a
+double-click would, in a fresh sandbox with **no network adapter**, with Windows' own auditing switched on, and
+tells you what it did:
+
+```text
+> sbx detonate .\samples\Suspicious\suspicious.ps1 --network firewall
+
+suspicious.ps1: 3 red flag(s) (watched 40s, network firewall)
+  findings   🔴 starts itself with Windows: added HKCU\Software\Microsoft\Windows\CurrentVersion\Run\ContosoUpdater =
+                powershell.exe -WindowStyle Hidden -ExecutionPolicy Bypass -File "C:\Users\...\ContosoUpdater\updater.ps1"
+             🔴 created a scheduled task: ContosoUpdate
+             🔴 put something in a Startup folder: C:\Users\...\Start Menu\Programs\Startup\contoso.cmd
+             🟠 wrote 2 runnable file(s): C:\Users\...\ContosoUpdater\updater.ps1, ...\Startup\contoso.cmd
+             🟠 ran built-in Windows tools that malware often uses: schtasks.exe, whoami.exe, ipconfig.exe, net.exe, net1.exe
+             🟠 looked up 1 internet name(s): c2.contoso-updates.example
+             🟠 tried to connect to 2 address(es): 198.51.100.7:4444, 203.0.113.10:80
+  processes  7 (powershell.exe → conhost.exe → schtasks.exe → whoami.exe → ipconfig.exe …)
+  network    1 name lookup(s), 2 connection attempt(s)
+  changed    4 files added, 0 changed, 2 registry keys, 1 autorun/env values, 0 services
+```
+
+([samples/Suspicious/suspicious.ps1](samples/Suspicious/suspicious.ps1) is harmless; it just behaves like
+something that isn't.) The report also has a timeline:
+
+```text
+  +0.0s  start    powershell.exe (pid 8180)  ... -File "C:\Users\WDAGUtilityAccount\Downloads\suspicious.ps1"
+  +1.5s  start    schtasks.exe (pid 7848)  /Create /F /TN ContosoUpdate /SC ONLOGON /TR "powershell.exe -WindowStyle Hidden ..."
+  +1.6s  start    whoami.exe (pid 7616)  /all
+  +1.7s  start    net.exe (pid 9064)  user
+  +1.7s  start    net1.exe (pid 8096)  C:\Windows\system32\net1 user
+ +15.0s  lookup   c2.contoso-updates.example (failed)
+ +15.1s  connect  203.0.113.10:80/TCP blocked (powershell.exe)
+ +15.2s  connect  198.51.100.7:4444/TCP blocked (powershell.exe)
+```
+
+plus the process tree, a before/after diff of files, registry, services and autoruns, the windows it opened,
+screenshots, and "everything else that happened" (usually Windows itself, kept separate rather than hidden).
+
+- **How:** process creation auditing with command lines (Security 4688), Windows Filtering Platform connection
+  auditing (5156/5157) and the DNS client log, collected from inside the guest, plus the same snapshots as
+  `install-test`. Activity is attributed to the file's own process tree, so the agent's own work isn't mixed in.
+- **Network:** `off` (default) has no adapter at all. Name lookups are still recorded, but nothing leaves the
+  machine. `--network firewall` also shows the IP addresses and ports it tries, blocked by the guest firewall.
+  `on` gives it the internet; only use that for things you're prepared to let talk to the world.
+- **Runs:** `.exe`, `.msi` (silently), `.ps1`, `.cmd`, `.bat`, `.js`/`.jse`/`.vbs`/`.vbe`/`.wsf` (with `wscript`) and
+  `.hta` (with `mshta`), from the user's Downloads folder.
+- **Watching:** up to `--duration` seconds (60), stopping early once everything it started has exited, unless
+  `--full`. A screenshot every `--every` seconds (15).
+- **Findings are heuristics, not a verdict.** Installers add autoruns and services too. Exit code 0 means "it was
+  observed", not "it's safe". This is a quick first look on your own PC, not a malware lab: something that checks
+  whether it's in a sandbox can just behave nicely.
+
 ## Network modes
 
 | Mode | How | Use it for |
 |---|---|---|
 | `on` (default) | Normal NAT networking. | Apps that need the internet, downloading prerequisites. |
 | `firewall` | Guest firewall blocks all outbound traffic (DNS included); only the control channel from the host is allowed. | Testing offline behavior quickly. Admin code in the guest *could* undo it. |
-| `off` | The sandbox has **no network adapter**. sandbox-mcp talks to it through a shared-folder mailbox (~100 ms per call). | Untrusted files, malware-ish things, and proving an app works with no network at all. |
+| `off` | The sandbox has **no network adapter**. sandbox-mcp talks to it through a shared-folder mailbox (~100 ms per call). | Untrusted files (the default for `detonate`), and proving an app works with no network at all. |
 
 In `firewall` and `off` mode, sandbox-mcp also switches off Smart App Control in the guest. It ships in evaluation
 mode and asks the cloud about every new exe and msi; with no internet each of those lookups hangs for about two
@@ -275,6 +334,10 @@ minutes (a 2 MB MSI took 125 s to install instead of 1 s).
   30 minutes with no calls.
 - With `network: on` the guest has internet access like any other machine on your network's NAT. Use `off` for
   anything you don't trust.
+- The `out` folder is writable from inside the sandbox, so treat what comes back (screenshots, pulled files, logs)
+  as untrusted, especially after `detonate`. sandbox-mcp reads data from it but never runs anything from it.
+- Windows Sandbox is strong isolation, but not a guarantee: a hypervisor or Windows Sandbox escape would be a
+  zero-day. For real malware analysis use a dedicated, disposable analysis machine.
 
 ## Configuration
 

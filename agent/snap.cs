@@ -53,6 +53,10 @@ public static class SbxSnap {
         "BITS", "wuauserv", "UsoSvc", "WaaSMedicSvc", "sppsvc", "TrustedInstaller", "edgeupdate", "edgeupdatem", "MapsBroker",
     };
 
+    static readonly HashSet<string> RunnableExt = new HashSet<string>(StringComparer.OrdinalIgnoreCase) {
+        ".exe", ".dll", ".sys", ".scr", ".com", ".cpl", ".msi", ".ps1", ".psm1", ".bat", ".cmd", ".vbs", ".vbe", ".js", ".jse", ".wsf", ".hta", ".lnk", ".jar",
+    };
+
     static string[] FlatRoots = { @"C:\", @"C:\Windows", @"C:\Windows\System32", @"C:\Windows\SysWOW64" };
     static string[] DeepRoots = {
         @"C:\Program Files", @"C:\Program Files (x86)", @"C:\ProgramData", @"C:\Users",
@@ -272,7 +276,12 @@ public static class SbxSnap {
         h["removed"] = Collapse(removed, goneC, sizeOf(a), max, out t); h["removedGroups"] = t;
         h["changed"] = changed.OrderBy(x => x, StringComparer.OrdinalIgnoreCase).Take(max).ToList(); h["changedCount"] = changed.Count;
         h["addedCount"] = added.Count; h["removedCount"] = removed.Count;
-        if (itemKind == "f") { h["addedBytes"] = added.Sum(p => sizeOf(b)(p)); }
+        if (itemKind == "f") {
+            h["addedBytes"] = added.Sum(p => sizeOf(b)(p));
+            // Runnable files that appeared anywhere, including inside new folders that the list above collapses.
+            var exe = added.Where(p => !newC.Contains(p) && RunnableExt.Contains(System.IO.Path.GetExtension(p))).OrderBy(x => x, StringComparer.OrdinalIgnoreCase).ToList();
+            h["executables"] = exe.Take(max).ToList(); h["executableCount"] = exe.Count;
+        }
         return h;
     }
 

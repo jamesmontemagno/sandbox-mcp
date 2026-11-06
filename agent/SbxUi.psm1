@@ -29,6 +29,7 @@ public static class SbxTlb {
     New-Item -ItemType Directory -Force $dir | Out-Null
     $interop = Join-Path $dir 'Interop.UIAutomationClient.dll'
     if (-not (Test-Path $interop)) { [SbxTlb]::Generate($interop) }
+    Add-Type -Path $interop # load it first so the compiled code can resolve it by name
     Add-Type -Path (Join-Path $PSScriptRoot 'uia.cs') -ReferencedAssemblies $interop, System.Core
 }
 

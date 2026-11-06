@@ -7,6 +7,7 @@ import { z } from 'zod';
 import * as sbx from './core.js';
 import { runApp } from './run.js';
 import { installTest, installSummary } from './install.js';
+import { detonate, detonateSummary } from './detonate.js';
 
 const text = (v) => ({ content: [{ type: 'text', text: typeof v === 'string' ? v : JSON.stringify(v, null, 2) }] });
 const image = (base64, caption) => ({ content: [{ type: 'image', data: base64, mimeType: 'image/png' }, { type: 'text', text: caption }] });
@@ -301,6 +302,36 @@ server.registerTool('sandbox_install_test', {
   const shot = r.shots.find((s) => s.name.endsWith('-stuck')) ?? r.shots.find((s) => s.name === 'after-install');
   if (shot) content.push({ type: 'image', data: shot.previewBase64, mimeType: 'image/png' });
   return { content, isError: !r.pass };
+}));
+
+server.registerTool('sandbox_detonate', {
+  title: 'Run an untrusted file and report what it does',
+  description: 'One shot: boot a fresh sandbox (no network adapter by default), turn on Windows process, connection and DNS auditing, ' +
+    'run the file the way a double-click would, watch it, then destroy the sandbox. Reports every process it started (with ' +
+    'command lines), names it looked up, connections it tried, files/registry/autoruns/services/scheduled tasks it changed, ' +
+    'windows and screenshots, plus plain-language findings (heuristics, not a verdict). Fails if a sandbox is already running.',
+  inputSchema: {
+    file: z.string().describe('Host path to an .exe, .msi, .ps1, .cmd, .bat, .js, .vbs, .wsf or .hta.'),
+    args: z.string().optional(),
+    network: z.enum(['off', 'firewall', 'on']).optional().describe(
+      'off (default): no adapter; name lookups are still recorded. firewall: also records the addresses it tries (blocked by the ' +
+      'guest firewall, which admin code could undo). on: real internet; only for files you are prepared to let talk to the world.'),
+    durationSec: z.number().min(5).optional().describe('Watch for at most this long (default 60).'),
+    full: z.boolean().optional().describe('Watch the whole duration even after everything it started has exited.'),
+    exclude: z.array(z.string()).optional().describe('Extra noisy paths to ignore in the snapshots.'),
+    keep: z.boolean().optional().describe('Leave the sandbox running afterwards (it keeps whatever the file did).'),
+  },
+}, tool(async (a) => {
+  const r = await detonate({ ...a, network: a.network ?? 'off' });
+  if (r.kept) startedId = r.sandbox.id;
+  const parts = [detonateSummary(r)];
+  if (r.findings.length) parts.push(r.findings.map((f) => `- [${f.level}] ${f.text}`).join('\n'));
+  if (r.tree?.length) parts.push('Processes:\n' + r.tree.map((p) => `${'  '.repeat(p.depth)}${p.pid} ${p.commandLine || p.path}`).join('\n'));
+  if (r.error) parts.push(`Error: ${r.error}`);
+  const content = [{ type: 'text', text: cap(parts.join('\n\n'), 60_000) }];
+  const last = r.shots.at(-1);
+  if (last?.previewBase64) content.push({ type: 'image', data: last.previewBase64, mimeType: 'image/png' });
+  return { content, isError: !!r.error };
 }));
 
 // Lifecycle: a sandbox started by this server should not outlive the client that asked for it.

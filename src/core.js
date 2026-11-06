@@ -427,6 +427,7 @@ export async function snapshot(name, exclude = []) {
 export async function diffSnapshots(from, to, max = 200) {
   const d = await call('diff', { from, to, max }, 300_000);
   for (const sec of [d.files, d.registry]) for (const k of ['added', 'removed', 'changed']) sec[k] = [].concat(sec[k] ?? []);
+  d.files.executables = [].concat(d.files.executables ?? []);
   for (const k of ['values', 'services', 'programsAdded', 'programsRemoved']) d[k] = [].concat(d[k] ?? []);
   return d;
 }

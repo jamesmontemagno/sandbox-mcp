@@ -1,6 +1,6 @@
 ---
 name: windows-sandbox-app-test
-description: Test a Windows desktop or console app, or its installer, on a fresh, throwaway Windows machine (Windows Sandbox) through the sandbox-mcp tools or the sbx CLI. Use when asked to "try my build on a clean machine", check that an exe runs without the dev box's installed runtimes, smoke-test a GUI with screenshots and UI Automation, check what an installer changes or what its uninstaller leaves behind, reproduce "works on my machine" bugs, or run something risky where it can't touch the real PC.
+description: Test a Windows desktop or console app, or its installer, on a fresh, throwaway Windows machine (Windows Sandbox) through the sandbox-mcp tools or the sbx CLI. Use when asked to "try my build on a clean machine", check that an exe runs without the dev box's installed runtimes, smoke-test a GUI with screenshots and UI Automation, check what an installer changes or what its uninstaller leaves behind, find out what an untrusted file or script does when run, reproduce "works on my machine" bugs, or run something risky where it can't touch the real PC.
 ---
 
 # Testing apps in Windows Sandbox
@@ -19,7 +19,11 @@ no winget. It has Windows PowerShell 5.1 and .NET Framework 4.8. Treat it like a
    snapshots, and reports what was added and what was left behind (files, registry, services, tasks, autoruns).
    `.msi` gets `/qn` automatically; for `.exe` pass the silent switch in `args` (`/S` NSIS, `/VERYSILENT` Inno).
    A hung install comes back with a screenshot of the dialog it was waiting on.
-3. **Interactive exploration or multi-step UI testing** -> `sandbox_start`, the step tools below, `sandbox_stop`.
+3. **"What does this file do? Is it safe to run?"** -> `sandbox_detonate` (or `sbx detonate <file>`). Runs it with no
+   network (by default), Windows auditing on, and reports processes with command lines, names looked up, connections
+   tried (`network: "firewall"` to see addresses), autoruns, scheduled tasks, services and files it planted, plus
+   screenshots and findings. Findings are heuristics: tell the user what it did, not "it's safe".
+4. **Interactive exploration or multi-step UI testing** -> `sandbox_start`, the step tools below, `sandbox_stop`.
    `sandbox_snapshot` before and after anything + `sandbox_diff` shows what it changed on the system.
 
 ## Step-by-step loop
