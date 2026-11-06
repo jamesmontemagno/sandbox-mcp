@@ -65,6 +65,9 @@ install, launch and work on a clean PC, and what does it look like?"* as quickly
 
 - **Clean-machine smoke tests:** does the exe even start without the VC++ runtime / .NET runtime / WebView2 you
   forgot to bundle? `sbx run` tells you, with a screenshot and the crash events.
+- **Test installers and uninstallers:** `sbx install-test setup.msi` installs on a clean machine, uninstalls, and
+  reports every file, registry key, service, scheduled task and autorun the installer added and the uninstaller
+  forgot. Hung installers waiting on a hidden dialog get screenshotted instead of hanging your CI.
 - **Drive the UI with UI Automation, not pixels:** read the control tree (`Button "Save" #SaveButton {invoke}`),
   set text, click, toggle, select, wait for results. Works for WinForms, WPF, Win32 and WinUI apps, and things like
   File Explorer. Screenshots, mouse and keyboard are there for everything else.
@@ -149,12 +152,17 @@ teaches agents the workflow; copy it into your agent's skills folder (for exampl
 | `sandbox_ui_action` | Find a control by name / automation id / type and click, set a value, toggle, select, expand, read... |
 | `sandbox_ui_wait` | Wait for a control (a result, a dialog) to appear. |
 | `sandbox_app_errors` | Application event log errors: crashes, hangs, .NET unhandled exceptions. |
+| `sandbox_install_test` | The installer loop in one call: snapshot, install, snapshot, optional test, uninstall, snapshot, report what was added and left behind. |
+| `sandbox_snapshot` | Record files, registry, services, autoruns and installed programs under a name. |
+| `sandbox_diff` | Compare two snapshots: what changed in between. |
 
 ## CLI
 
 ```text
 sbx run <app.exe|folder> [--exe <name>] [--args "<args>"] [--console] [--wait <sec>]
                          [--test <script.ps1>] [--collect <sandbox path>]... [--keep] [--open]
+sbx install-test <setup.msi|.exe|.ps1|.cmd> [--args "/S"] [--uninstall auto|none|"<cmd>"]
+                         [--uninstall-args "/S"] [--test <script.ps1>] [--fail-on-leftovers] [--exclude <path>]...
 
 sbx start [--network on|firewall|off] [--memory <MB>] [--no-gpu] [--minimized]
 sbx push <host path> [sandbox path]          sbx pull <sandbox path> [name]
@@ -162,6 +170,7 @@ sbx exec [--cmd] [--cwd <dir>] <command...>  sbx launch <exe> [--args "..."]
 sbx shot [--window <title>|--pid <pid>]      sbx windows   sbx proc <pid>
 sbx ui [tree] [--pid <pid>]                  sbx ui click --name Save
 sbx ui set --id NameBox --value Scott        sbx ui wait --name "Saved" --timeout 10
+sbx snapshot <name> [--exclude <path>]...    sbx diff <from> <to>
 sbx click <x> <y>   sbx type "text" [--keys] sbx errors   sbx status   sbx stop
 sbx mcp                                      # run the MCP server
 ```
@@ -193,6 +202,53 @@ Invoke-SbxUi -ProcessId $app -Name Greet -Action click
 Wait-SbxUi   -ProcessId $app -Name 'Hello, Sandbox!' -TimeoutSec 5 | Out-Null
 ```
 
+## Installer testing
+
+Installers are the part of an app that only ever runs on clean machines, so they're the part you test least.
+`sbx install-test` takes a system snapshot of a fresh sandbox, runs your installer silently, snapshots again,
+uninstalls it the way Add/Remove Programs would, snapshots a third time and diffs them:
+
+```text
+> sbx install-test .\7z2501-x64.msi --offline
+
+PASS  7z2501-x64.msi on a fresh Windows Sandbox (117.5s)
+  install    exit 0 in 2.5s
+  added      7-Zip 25.01 (x64 edition); 111 files, 18 registry keys, 0 services, 0 autorun/env values
+  uninstall  7-Zip 25.01 (x64 edition): exit 0 in 2.3s
+  leftovers  none, clean uninstall
+```
+
+The report lists what was added (here: `C:\Program Files\7-Zip`, the Start menu folder, the shell extension
+CLSIDs and context-menu handlers, App Paths and the uninstall entry) and what's **left behind**. Try the included
+deliberately sloppy installer, whose uninstaller only deletes its program folder:
+
+```text
+> sbx install-test .\samples\LeakyApp\install.ps1
+
+## Left behind after uninstall
+Services:  added service LeakyUpdater "Leaky App Updater", automatic: "C:\Program Files\LeakyApp\updater.exe"
+Autoruns:  added HKCU\Software\Microsoft\Windows\CurrentVersion\Run\LeakyUpdater
+Files:     C:\ProgramData\LeakyApp\   C:\Users\WDAGUtilityAccount\AppData\Roaming\LeakyApp\
+           C:\Windows\System32\Tasks\LeakyApp Daily Check
+Registry:  HKLM\SOFTWARE\LeakyApp
+```
+
+- `.msi` files get `msiexec /i /qn /norestart` with a verbose log (brought back, with its errors in the report).
+  For `.exe` installers pass the silent switch: `--args /S` (NSIS), `/VERYSILENT` (Inno), `--silent` (Squirrel).
+- The uninstall uses what the installer registered: `msiexec /x {ProductCode}`, else `QuietUninstallString`, else
+  `UninstallString` plus `--uninstall-args`. The run fails if the program is still in Add/Remove Programs afterwards.
+- An installer that doesn't exit within `--timeout` is screenshotted (and its new windows' UI Automation tree
+  recorded) before it's killed. That's usually a "silent" install that's waiting for someone to click a dialog.
+- Processes the installer leaves running (tray apps, updaters) are listed and stopped before uninstalling.
+- `--test smoke.ps1` runs between install and uninstall with `$env:SBX_INSTALL_DIR` and `$env:SBX_PROGRAM`.
+- `--fail-on-leftovers` turns leftovers into a failure, for CI.
+- The snapshots skip the things Windows changes on its own (caches, telemetry, Defender, Windows Update, Start menu
+  and Explorer bookkeeping, Windows Installer's internal database), so a 30-second idle sandbox diffs to "No changes".
+  `--exclude` adds more.
+
+The same snapshots are available step by step: `sbx snapshot before`, do anything, `sbx snapshot after`,
+`sbx diff before after` (or the `sandbox_snapshot` / `sandbox_diff` tools).
+
 ## Network modes
 
 | Mode | How | Use it for |
@@ -200,6 +256,10 @@ Wait-SbxUi   -ProcessId $app -Name 'Hello, Sandbox!' -TimeoutSec 5 | Out-Null
 | `on` (default) | Normal NAT networking. | Apps that need the internet, downloading prerequisites. |
 | `firewall` | Guest firewall blocks all outbound traffic (DNS included); only the control channel from the host is allowed. | Testing offline behavior quickly. Admin code in the guest *could* undo it. |
 | `off` | The sandbox has **no network adapter**. sandbox-mcp talks to it through a shared-folder mailbox (~100 ms per call). | Untrusted files, malware-ish things, and proving an app works with no network at all. |
+
+In `firewall` and `off` mode, sandbox-mcp also switches off Smart App Control in the guest. It ships in evaluation
+mode and asks the cloud about every new exe and msi; with no internet each of those lookups hangs for about two
+minutes (a 2 MB MSI took 125 s to install instead of 1 s).
 
 ## Security notes
 
@@ -250,6 +310,9 @@ screenshots, no UI. So:
 - No Microsoft Store apps, winget, Notepad, Calculator or Windows Terminal inside. Windows PowerShell 5.1 and
   .NET Framework 4.8 are there.
 - The first UI Automation call in a sandbox takes ~4 s (it generates the interop); later calls are fast.
+- A system snapshot takes 10-20 s (about 11k files, 340k registry keys, 700 services), so `install-test` takes
+  roughly two minutes plus your installer's own time.
+- The guest desktop gets a plain background so screenshots stay around 100 KB instead of 16 MB.
 - Needs a logged-in Windows session on the host (Windows Sandbox is a desktop feature).
 
 ## Related projects

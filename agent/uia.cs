@@ -35,6 +35,10 @@ public static class SbxUia
     }
 
     [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
+    delegate bool EnumWindowsProc(IntPtr h, IntPtr l);
+    [DllImport("user32.dll")] static extern bool EnumWindows(EnumWindowsProc f, IntPtr l);
+    [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
+    [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr h);
     [DllImport("user32.dll")] static extern bool SetCursorPos(int x, int y);
     [DllImport("user32.dll")] static extern void mouse_event(uint f, uint x, uint y, uint d, IntPtr e);
 
@@ -68,7 +72,15 @@ public static class SbxUia
             return new List<IUIAutomationElement> { A.ElementFromHandle(h) };
         }
         IUIAutomationCondition c = pid > 0 ? A.CreatePropertyCondition(ProcessIdProp, pid) : A.CreateTrueCondition();
-        return Items(A.GetRootElement().FindAll(TreeScope.TreeScope_Children, c))
+        var roots = Items(A.GetRootElement().FindAll(TreeScope.TreeScope_Children, c)).ToList();
+        if (roots.Count == 0 && pid > 0)
+        {
+            // UIA can attribute a process's window to another one (a console app's MessageBox, for one); ask Win32.
+            var handles = new List<IntPtr>();
+            EnumWindows((h, l) => { uint p; GetWindowThreadProcessId(h, out p); if (p == pid && IsWindowVisible(h)) handles.Add(h); return true; }, IntPtr.Zero);
+            foreach (var h in handles) { var e = Safe(() => A.ElementFromHandle(h)); if (e != null) roots.Add(e); }
+        }
+        return roots
             .Where(e => string.IsNullOrEmpty(title) || (Safe(() => e.CurrentName) ?? "").IndexOf(title, StringComparison.OrdinalIgnoreCase) >= 0)
             .ToList();
     }

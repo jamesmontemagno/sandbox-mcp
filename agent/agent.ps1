@@ -33,6 +33,18 @@ $shotDir = Join-Path $OutDir 'screenshots'
 New-Item -ItemType Directory -Force $shotDir | Out-Null
 $script:shotCount = 0
 
+# Solid desktop instead of the photo wallpaper: full-screen PNGs drop from ~16 MB to a few hundred KB and read better.
+try {
+    Add-Type -Namespace Sbx -Name Desk -MemberDefinition @'
+[DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern bool SystemParametersInfo(uint a, uint p, string v, uint f);
+[DllImport("user32.dll")] public static extern bool SetSysColors(int n, int[] e, int[] c);
+'@
+    Set-ItemProperty 'HKCU:\Control Panel\Colors' Background '32 40 52'
+    Set-ItemProperty 'HKCU:\Control Panel\Desktop' WallPaper ''
+    [Sbx.Desk]::SetSysColors(1, @(1), @(0x342820)) | Out-Null
+    [Sbx.Desk]::SystemParametersInfo(0x14, 0, '', 3) | Out-Null
+} catch { }
+
 function Find-Window($req) {
     $procs = Get-Process | Where-Object { $_.MainWindowHandle -ne [IntPtr]::Zero }
     if ($req.pid) { $procs = $procs | Where-Object Id -eq ([int]$req.pid) }
@@ -84,9 +96,9 @@ function Convert-Stderr([string]$s) {
 $script:launched = @{}
 
 function Op-Launch($req) {
-    $a = @{ FilePath = $req.path; PassThru = $true }
+    $a = @{ FilePath = [Environment]::ExpandEnvironmentVariables($req.path); PassThru = $true }
     if ($req.args) { $a.ArgumentList = $req.args }
-    if ($req.cwd) { $a.WorkingDirectory = $req.cwd } else { $a.WorkingDirectory = Split-Path -Parent $req.path }
+    if ($req.cwd) { $a.WorkingDirectory = $req.cwd } elseif (Split-Path -Parent $a.FilePath) { $a.WorkingDirectory = Split-Path -Parent $a.FilePath }
     $launchedAt = (Get-Date).ToString('o')
     $p = Start-Process @a
     $null = $p.Handle # keep the handle so ExitCode is available after the process exits
@@ -203,6 +215,24 @@ function Op-UiWait($req) {
         -ControlType ([string]$req.controlType) -TimeoutSec (Get-Opt $req.timeoutSec 30)
 }
 
+# System change tracking (see snap.cs): snapshot files/registry/services/autoruns/programs, then diff two snapshots.
+$script:snapDir = 'C:\sbx-snap'
+function Import-SbxSnap { if (-not ('SbxSnap' -as [type])) { Add-Type -Path (Join-Path $PSScriptRoot 'snap.cs') -ReferencedAssemblies System.Core } }
+function Get-SnapPath([string]$name) {
+    if ($name -notmatch '^[\w-]+$') { throw "Snapshot names may only contain letters, digits, - and _ (got '$name')" }
+    Join-Path $script:snapDir "$name.tsv"
+}
+function Op-Snapshot($req) {
+    Import-SbxSnap
+    [SbxSnap]::Take((Get-SnapPath $req.name), [string[]]@($req.exclude | Where-Object { $_ }))
+}
+function Op-Diff($req) {
+    Import-SbxSnap
+    $a = Get-SnapPath $req.from; $b = Get-SnapPath $req.to
+    foreach ($f in $a, $b) { if (-not (Test-Path $f)) { throw "No snapshot named '$([IO.Path]::GetFileNameWithoutExtension($f))'" } }
+    [SbxSnap]::Diff($a, $b, [int](Get-Opt $req.max 200))
+}
+
 function Invoke-Request([string]$line) {
     $resp = try {
         $req = $line | ConvertFrom-Json
@@ -220,6 +250,8 @@ function Invoke-Request([string]$line) {
             'uitree'     { Op-UiTree $req }
             'uiaction'   { Op-UiAction $req }
             'uiwait'     { Op-UiWait $req }
+            'snapshot'   { Op-Snapshot $req }
+            'diff'       { Op-Diff $req }
             default      { throw "unknown op '$($req.op)'" }
         }
         # An op that outputs nothing yields AutomationNull, which PS 5.1 serializes as {}.
@@ -250,9 +282,14 @@ if ($Mailbox) {
     $inBox = 'C:\sbx\in\mailbox'; $outBox = Join-Path $OutDir 'mailbox'; $seqFile = Join-Path $inBox 'seq.txt'
     New-Item -ItemType Directory -Force $outBox | Out-Null
     $n = 1; $polls = 0
+    function Read-Shared($p) {
+        # FileShare.ReadWrite so our constant polling never blocks the host from bumping seq.txt.
+        $fs = [IO.File]::Open($p, 'Open', 'Read', 'ReadWrite, Delete')
+        try { (New-Object IO.StreamReader($fs)).ReadToEnd() } finally { $fs.Dispose() }
+    }
     while ($true) {
         $f = Join-Path $inBox ('req-{0:D6}.json' -f $n)
-        $avail = 0; try { $avail = [int]([IO.File]::ReadAllText($seqFile)) } catch { }
+        $avail = 0; try { $avail = [int](Read-Shared $seqFile) } catch { }
         $text = $null
         if ($avail -ge $n -or ((++$polls % 60) -eq 0 -and [IO.File]::Exists($f))) { try { $text = [IO.File]::ReadAllText($f) } catch { } }
         if ($text) {

@@ -1,0 +1,29 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    # Hosted runners can't boot Windows Sandbox (no nested virtualization), so CI covers the host logic and checks
+    # that the guest agent parses and compiles with Windows PowerShell 5.1. The end-to-end tests (npm run e2e) need
+    # a real Windows 11 machine with Windows Sandbox.
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - name: CLI and MCP server load
+        run: |
+          Get-ChildItem src\*.js | ForEach-Object { node --check $_.FullName; if ($LASTEXITCODE) { exit 1 } }
+          node src/cli.js version
+        shell: pwsh

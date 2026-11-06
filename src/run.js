@@ -6,7 +6,19 @@ import * as sbx from './core.js';
 
 const q = (s) => `'${String(s).replace(/'/g, "''")}'`;
 
-async function shot(args) {
+/** Copy a host .ps1 into the sandbox and run it with SbxUi loaded and the given $env: variables. Exit 0 = pass. */
+export async function runTestScript(test, vars = {}, cwd, timeoutSec = 300) {
+  const t = await sbx.copyIn(test, `C:\\sbx-test\\${path.basename(test)}`);
+  const env = Object.entries({ ...vars, SBX_OUT: sbx.GUEST.out }).map(([k, v]) => `$env:${k}=${q(v ?? '')}; `).join('') +
+    `Import-Module '${sbx.GUEST.agent}\\SbxUi.psm1'; `;
+  const r = await sbx.exec({
+    command: `${env}$global:LASTEXITCODE = 0; try { & ${q(t.path)}; exit $LASTEXITCODE } catch { [Console]::Error.WriteLine(($_ | Out-String)); exit 1 }`,
+    cwd, timeoutSec,
+  });
+  return { ...r, script: path.basename(test) };
+}
+
+export async function shot(args) {
   const s = await sbx.screenshot(args);
   return { name: args.name, path: s.path, width: s.width, height: s.height, previewBase64: s.previewBase64 };
 }
@@ -53,14 +65,7 @@ export async function runApp(o) {
 
     if (o.test) {
       sbx.log(`running test ${path.basename(o.test)}`);
-      const t = await sbx.copyIn(o.test, `C:\\sbx-test\\${path.basename(o.test)}`);
-      const env = `$env:SBX_APP_PID=${q(r.launch?.pid ?? '')}; $env:SBX_APP_DIR=${q(appDir)}; $env:SBX_APP_EXE=${q(exePath)}; $env:SBX_OUT='C:\\sbx\\out'; ` +
-        `Import-Module '${sbx.GUEST.agent}\\SbxUi.psm1'; `;
-      r.test = await sbx.exec({
-        command: `${env}$global:LASTEXITCODE = 0; try { & ${q(t.path)}; exit $LASTEXITCODE } catch { [Console]::Error.WriteLine(($_ | Out-String)); exit 1 }`,
-        cwd: appDir, timeoutSec: o.testTimeoutSec ?? 300,
-      });
-      r.test.script = path.basename(o.test);
+      r.test = await runTestScript(o.test, { SBX_APP_PID: r.launch?.pid ?? '', SBX_APP_DIR: appDir, SBX_APP_EXE: exePath }, appDir, o.testTimeoutSec);
       if (r.launch) {
         r.process = await sbx.processInfo(r.launch.pid);
         if (r.process.hasWindow) r.shots.push(await shot({ pid: r.launch.pid, name: 'app-after-test' }));

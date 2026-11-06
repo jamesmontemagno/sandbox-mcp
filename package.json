@@ -10,7 +10,7 @@
   },
   "scripts": {
     "start": "node src/server.js",
-    "test": "node --test test/unit",
+    "test": "node --test \"test/unit/*.test.js\"",
     "smoke": "node test/smoke.js",
     "e2e": "node test/smoke.js && node test/offline.js"
   },

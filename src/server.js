@@ -6,6 +6,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod';
 import * as sbx from './core.js';
 import { runApp } from './run.js';
+import { installTest, installSummary } from './install.js';
 
 const text = (v) => ({ content: [{ type: 'text', text: typeof v === 'string' ? v : JSON.stringify(v, null, 2) }] });
 const image = (base64, caption) => ({ content: [{ type: 'image', data: base64, mimeType: 'image/png' }, { type: 'text', text: caption }] });
@@ -244,6 +245,60 @@ server.registerTool('sandbox_run', {
   ].filter(Boolean).join('\n');
   const shot = r.shots.find((s) => s.name === 'app') ?? r.shots.at(-1);
   const content = [{ type: 'text', text: summary }];
+  if (shot) content.push({ type: 'image', data: shot.previewBase64, mimeType: 'image/png' });
+  return { content, isError: !r.pass };
+}));
+
+server.registerTool('sandbox_snapshot', {
+  title: 'Snapshot sandbox state',
+  description: 'Record files (Program Files, ProgramData, user profiles, drivers, scheduled tasks, top of C:\\ and System32), all ' +
+    'HKLM\\SOFTWARE and HKCU\\Software keys, services/drivers, autoruns, environment and Add/Remove Programs entries under a name. ' +
+    'Known Windows background noise is filtered out. Takes ~15s. Compare two with sandbox_diff.',
+  inputSchema: {
+    name: z.string().regex(/^[\w-]+$/).describe('e.g. "before", "after-install"'),
+    exclude: z.array(z.string()).optional().describe('Extra file or registry (HKLM\\..., HKCU\\...) paths to ignore. A trailing * makes it a prefix match.'),
+  },
+}, tool(async ({ name, exclude }) => text(await sbx.snapshot(name, exclude))));
+
+server.registerTool('sandbox_diff', {
+  title: 'Diff two sandbox snapshots',
+  description: 'What changed between two snapshots: installed programs, services/drivers, autorun/environment values, files and ' +
+    'registry keys added/removed/changed. New folders and keys are collapsed to their topmost new parent. Markdown.',
+  inputSchema: {
+    from: z.string().regex(/^[\w-]+$/), to: z.string().regex(/^[\w-]+$/),
+    max: z.number().int().min(1).optional().describe('Max entries per list (default 200).'),
+  },
+}, tool(async ({ from, to, max }) => text(sbx.formatDiff(await sbx.diffSnapshots(from, to, max), { title: `${from} → ${to}` }))));
+
+server.registerTool('sandbox_install_test', {
+  title: 'Test an installer in a fresh sandbox',
+  description: 'One shot: boot a fresh sandbox, snapshot, run the installer silently, snapshot, optionally run a test script, ' +
+    'uninstall using what the installer registered in Add/Remove Programs, snapshot again, destroy the sandbox. Reports exactly what ' +
+    'the install added (files, registry, services, autoruns, scheduled tasks, processes left running) and what the uninstaller left ' +
+    'behind. If an installer hangs (usually a dialog waiting for a click), it is screenshotted and its controls are listed. ' +
+    'Fails if a sandbox is already running.',
+  inputSchema: {
+    installer: z.string().describe('Host path to a .msi, .exe, .ps1, .cmd or .bat installer.'),
+    args: z.string().optional().describe('Installer arguments. .msi already gets /qn /norestart; for .exe pass the silent switch (/S, /VERYSILENT, /quiet...).'),
+    uninstall: z.string().optional().describe('"auto" (default), "none", or an uninstall command line to run instead.'),
+    uninstallArgs: z.string().optional().describe('Auto mode: appended to the registered UninstallString when there is no QuietUninstallString, e.g. /S.'),
+    test: z.string().optional().describe('Host .ps1 run after install. Gets $env:SBX_INSTALL_DIR, SBX_PROGRAM, SBX_OUT. Non-zero exit = fail.'),
+    timeoutSec: z.number().min(10).optional().describe('Per installer/uninstaller run (default 600).'),
+    failOnLeftovers: z.boolean().optional(),
+    exclude: z.array(z.string()).optional().describe('Extra noisy paths to ignore in the snapshots.'),
+    keep: z.boolean().optional(),
+    network,
+  },
+}, tool(async (a) => {
+  const r = await installTest(a);
+  if (r.kept) startedId = r.sandbox.id;
+  const parts = [installSummary(r)];
+  if (r.installDiff) parts.push(sbx.formatDiff(r.installDiff, { title: 'What the install changed' }));
+  if (r.leftovers) parts.push(sbx.formatDiff(r.leftovers, { title: 'Left behind after uninstall' }));
+  for (const x of [r.install, ...r.uninstalls].filter((x) => x?.stuckUi)) parts.push(`--- stuck: ${x.command} ---\n${x.stuckUi}`);
+  if (r.test) parts.push(`--- test ${r.test.script}: exit ${r.test.exitCode} ---\n${cap(r.test.stdout, 10_000)}${r.test.stderr ? `\n${cap(r.test.stderr, 5_000)}` : ''}`);
+  const content = [{ type: 'text', text: cap(parts.join('\n\n'), 60_000) }];
+  const shot = r.shots.find((s) => s.name.endsWith('-stuck')) ?? r.shots.find((s) => s.name === 'after-install');
   if (shot) content.push({ type: 'image', data: shot.previewBase64, mimeType: 'image/png' });
   return { content, isError: !r.pass };
 }));

@@ -4,6 +4,7 @@
 import { spawn } from 'node:child_process';
 import * as sbx from './core.js';
 import { runApp, summary } from './run.js';
+import { installTest, installSummary } from './install.js';
 
 const HELP = `sbx ${sbx.VERSION} - fresh, throwaway Windows machines for testing your apps (Windows Sandbox)
 
@@ -20,6 +21,19 @@ One shot
       --collect <sandbox path>       Copy a file/folder back out afterwards (repeatable)
       --keep                         Leave the sandbox running afterwards
       --open                         Open the report when done
+
+  install-test <setup.msi|.exe|.ps1|.cmd> [options]
+                                     Snapshot a fresh sandbox, install, snapshot, uninstall, snapshot. Reports
+                                     what the installer added (files, registry, services, autoruns, tasks)
+                                     and what its uninstaller left behind. Exit 0 = pass.
+      --args "<args>"                Installer arguments, e.g. /S or /VERYSILENT (.msi already gets /qn)
+      --uninstall auto|none|"<cmd>"  auto (default): use what the installer registered in Add/Remove Programs
+      --uninstall-args "<args>"      Added to the registered UninstallString in auto mode, e.g. /S
+      --test <script.ps1>            Run after install ($env:SBX_INSTALL_DIR, SBX_PROGRAM, SBX_OUT)
+      --timeout <sec>                Per installer/uninstaller (default 600); a hung one gets screenshotted
+      --fail-on-leftovers            Fail if the uninstall leaves anything behind
+      --exclude <path>               Ignore a noisy file or registry path (repeatable)
+      --keep, --open                 As for run
 
 Step by step
   start [--network on|firewall|off] [--offline] [--memory <MB>] [--no-gpu] [--minimized]
@@ -45,6 +59,9 @@ Step by step
   ui wait [--name ...] [--id ...] [--type ...] [--timeout <sec>]
                                      Wait for a control to appear (exit 1 on timeout)
   errors [--since <iso time>]        Application event log errors (crashes, unhandled exceptions)
+  snapshot <name> [--exclude <path>]...
+                                     Record files, registry, services, autoruns and programs (~15s)
+  diff <from> <to> [--max <n>]       What changed between two snapshots
   stop [--force]                     Destroy the sandbox (--force: also one not started by sbx)
 
 Other
@@ -58,10 +75,11 @@ Data: ${sbx.HOME}`;
 
 // Options that take a value; everything else starting with -- is a boolean flag.
 const VALUE_OPTS = new Set(['network', 'memory', 'exe', 'args', 'wait', 'test', 'collect', 'cwd', 'timeout', 'window', 'pid', 'name', 'since',
-  'id', 'type', 'index', 'value', 'depth', 'max']);
+  'id', 'type', 'index', 'value', 'depth', 'max', 'uninstall', 'uninstall-args', 'exclude']);
+const REPEAT_OPTS = new Set(['collect', 'exclude']);
 
 function parse(argv) {
-  const pos = [], opt = { collect: [] };
+  const pos = [], opt = { collect: [], exclude: [] };
   let i = 0;
   const restCommand = argv[0] === 'exec'; // exec: options only before the command; the rest is the command line
   for (; i < argv.length; i++) {
@@ -72,7 +90,7 @@ function parse(argv) {
       if (VALUE_OPTS.has(k)) {
         const v = inline ?? argv[++i];
         if (v === undefined) throw new Error(`--${k} needs a value`);
-        if (k === 'collect') opt.collect.push(v); else opt[k] = v;
+        if (REPEAT_OPTS.has(k)) opt[k].push(v); else opt[k] = v;
       } else opt[k] = true;
       continue;
     }
@@ -223,6 +241,36 @@ async function main(argv) {
       const e = await sbx.appErrors(opt.since);
       out(opt, e, () => e.length ? e.map((x) => `${x.time}  ${x.source} (${x.id})\n${x.message}\n`).join('\n') : 'No application errors.');
       return 0;
+    }
+
+    case 'snapshot': {
+      need(1, 'snapshot <name> [--exclude <path>]...');
+      out(opt, await sbx.snapshot(pos[0], opt.exclude), (r) =>
+        `Snapshot '${pos[0]}': ${r.files} files, ${r.dirs} folders, ${r.registryKeys} registry keys, ${r.services} services (${(r.ms / 1000).toFixed(1)}s)`);
+      return 0;
+    }
+
+    case 'diff': {
+      need(2, 'diff <from> <to> [--max <n>]');
+      out(opt, await sbx.diffSnapshots(pos[0], pos[1], num(opt.max, '--max')), (d) => sbx.formatDiff(d, { title: `${pos[0]} → ${pos[1]}` }));
+      return 0;
+    }
+
+    case 'install-test': {
+      need(1, 'install-test <setup.msi|.exe|.ps1|.cmd> [--args "..."] [--uninstall auto|none|"<cmd>"] [--test <script.ps1>] [--keep]');
+      const r = await installTest({
+        installer: pos[0], args: opt.args, uninstall: opt.uninstall, uninstallArgs: opt['uninstall-args'], test: opt.test,
+        timeoutSec: num(opt.timeout, '--timeout'), failOnLeftovers: !!opt['fail-on-leftovers'], exclude: opt.exclude,
+        max: num(opt.max, '--max'), keep: !!opt.keep, ...startOpts(opt),
+      });
+      if (opt.json) console.log(JSON.stringify({ ...r, shots: r.shots.map(({ previewBase64, ...s }) => s) }, null, 2));
+      else {
+        console.log(installSummary(r));
+        if (r.test && r.test.exitCode !== 0) console.log(`--- test ${r.test.script} ---\n${[r.test.stdout, r.test.stderr].filter(Boolean).join('\n').trimEnd()}`);
+        if (r.kept) console.log('Sandbox left running; `sbx stop` when done.');
+      }
+      if (opt.open && r.reportPath) spawn('cmd.exe', ['/c', 'start', '', r.reportPath], { detached: true, stdio: 'ignore', windowsHide: true }).unref();
+      return r.pass ? 0 : 1;
     }
 
     case 'run': {

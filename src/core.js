@@ -118,7 +118,7 @@ async function fileCall(target, op, params, timeoutMs) {
   const seqFile = path.join(path.dirname(reqFile), 'seq.txt');
   let seen = 0;
   try { seen = Number(fs.readFileSync(seqFile, 'utf8')) || 0; } catch { }
-  if (Number(n) > seen) fs.writeFileSync(seqFile, String(Number(n)));
+  if (Number(n) > seen) await retryBusy(() => fs.writeFileSync(seqFile, String(Number(n))));
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     if (fs.existsSync(respFile)) {
@@ -130,6 +130,16 @@ async function fileCall(target, op, params, timeoutMs) {
     await sleep(50);
   }
   throw Object.assign(new Error(`agent '${op}' timed out after ${timeoutMs}ms`), { code: 'ETIMEDOUT' });
+}
+
+// The guest polls seq.txt through the share, so its read handle can briefly lock the file.
+async function retryBusy(fn, tries = 40) {
+  for (let i = 1; ; i++) {
+    try { return fn(); } catch (e) {
+      if (i >= tries || !['EBUSY', 'EPERM', 'EACCES'].includes(e.code)) throw e;
+      await sleep(25);
+    }
+  }
 }
 
 function nextMailboxSeq(target) {
@@ -240,6 +250,12 @@ export async function startSandbox({ network = 'on', internet, memoryMB, window 
       // Block by default, and also disable every outbound allow rule: the platform ships "Container: allow outbound".
       await wsb(['exec', '--id', id, '-r', 'System', '-c',
         `cmd /c "netsh advfirewall firewall add rule name=sbx-agent dir=in action=allow protocol=TCP localport=${AGENT_PORT} && netsh advfirewall set allprofiles firewallpolicy blockinbound,blockoutbound && netsh advfirewall firewall set rule name=all dir=out new enable=no"`]);
+    }
+    if (network !== 'on') {
+      // Smart App Control ships in evaluation mode and asks the cloud about every new exe/msi; with no internet each
+      // lookup hangs ~2 minutes (a 2 MB MSI took 125s instead of 1s). Switch it off in this throwaway guest.
+      await wsb(['exec', '--id', id, '-r', 'System', '-c',
+        'cmd /c "reg add HKLM\\SYSTEM\\CurrentControlSet\\Control\\CI\\Policy /v VerifiedAndReputablePolicyState /t REG_DWORD /d 0 /f && CiTool.exe --refresh --json"']);
     }
     const agentArgs = `-Port ${AGENT_PORT} -IdleMinutes ${IDLE_MINUTES}${offline ? ' -Mailbox' : ''}`;
     await wsb(['exec', '--id', id, '-r', 'ExistingLogin', '-c',
@@ -400,6 +416,71 @@ export function formatUiTree(t) {
   return nodes.map((n) => formatUiNode(n)).join('\n') + (t?.truncated ? '\n… (truncated: raise maxNodes or lower depth, or target a window)' : '');
 }
 
+// ---------- change tracking ----------
+
+/** Record files, registry keys, services, autoruns, environment and installed programs under a name. */
+export async function snapshot(name, exclude = []) {
+  return call('snapshot', { name, exclude }, 600_000);
+}
+
+/** What changed between two snapshots (new folders/keys collapsed to their topmost new parent). */
+export async function diffSnapshots(from, to, max = 200) {
+  const d = await call('diff', { from, to, max }, 300_000);
+  for (const sec of [d.files, d.registry]) for (const k of ['added', 'removed', 'changed']) sec[k] = [].concat(sec[k] ?? []);
+  for (const k of ['values', 'services', 'programsAdded', 'programsRemoved']) d[k] = [].concat(d[k] ?? []);
+  return d;
+}
+
+const kb = (n) => n >= 1048576 ? `${(n / 1048576).toFixed(1)} MB` : n >= 1024 ? `${Math.round(n / 1024)} KB` : `${n || 0} B`;
+
+/** Markdown for a snapshot diff. */
+export function formatDiff(d, { title = 'Changes' } = {}) {
+  const out = [];
+  const list = (items, fmt) => items.forEach((i) => out.push(`- ${fmt(i)}`));
+  const entry = (i) => i.container ? `\`${i.path}\\\` (new, ${i.items} item(s)${i.bytes ? `, ${kb(i.bytes)}` : ''})` : `\`${i.path}\`${i.bytes ? ` (${kb(i.bytes)})` : ''}`;
+  const more = (shown, total) => { if (total > shown) out.push(`- … and ${total - shown} more`); };
+  const total = d.files.addedCount + d.files.removedCount + d.files.changedCount + d.registry.addedCount + d.registry.removedCount +
+    d.values.length + d.services.length + d.programsAdded.length + d.programsRemoved.length;
+  out.push(`### ${title}`, '');
+  if (!total) { out.push('No changes.', ''); return out.join('\n'); }
+  if (d.programsAdded.length || d.programsRemoved.length) {
+    out.push('**Installed programs**', '');
+    list(d.programsAdded, (p) => `➕ ${p.displayName}${p.displayVersion ? ` ${p.displayVersion}` : ''}${p.publisher ? ` (${p.publisher})` : ''}`);
+    list(d.programsRemoved, (p) => `➖ ${p.displayName}${p.displayVersion ? ` ${p.displayVersion}` : ''}`);
+    out.push('');
+  }
+  if (d.services.length) {
+    out.push('**Services and drivers**', '');
+    list(d.services, (s) => {
+      const [disp, kind, start, image] = (s.after ?? s.before).split('|');
+      const startName = { 0: 'boot', 1: 'system', 2: 'automatic', 3: 'manual', 4: 'disabled' }[start] ?? start;
+      return `${s.change} ${kind} \`${s.name}\`${disp ? ` "${disp}"` : ''}, ${startName}${image ? `: \`${image}\`` : ''}`;
+    });
+    out.push('');
+  }
+  if (d.values.length) {
+    out.push('**Autoruns, environment and other watched values**', '');
+    list(d.values, (v) => v.change === 'changed' ? `changed \`${v.name}\`: \`${v.before}\` → \`${v.after}\`` : `${v.change} \`${v.name}\` = \`${v.after ?? v.before}\``);
+    out.push('');
+  }
+  const f = d.files;
+  if (f.addedCount || f.removedCount || f.changedCount) {
+    out.push(`**Files**: ${f.addedCount} added (${kb(f.addedBytes)}), ${f.removedCount} removed, ${f.changedCount} changed`, '');
+    list(f.added, (i) => `➕ ${entry(i)}`); more(f.added.length, f.addedGroups);
+    list(f.removed, (i) => `➖ ${entry(i)}`); more(f.removed.length, f.removedGroups);
+    list(f.changed, (p) => `✏️ \`${p}\``); more(f.changed.length, f.changedCount);
+    out.push('');
+  }
+  const r = d.registry;
+  if (r.addedCount || r.removedCount) {
+    out.push(`**Registry keys**: ${r.addedCount} added, ${r.removedCount} removed`, '');
+    list(r.added, (i) => `➕ \`${i.path}\`${i.items ? ` (+${i.items} subkeys)` : ''}`); more(r.added.length, r.addedGroups);
+    list(r.removed, (i) => `➖ \`${i.path}\`${i.items ? ` (+${i.items} subkeys)` : ''}`); more(r.removed.length, r.removedGroups);
+    out.push('');
+  }
+  return out.join('\n');
+}
+
 /** Application-log errors/crashes since a guest timestamp (ISO). */
 export async function appErrors(sinceIso) {
   const since = sinceIso ? `[datetime]::Parse('${sinceIso}').AddSeconds(-2)` : '(Get-Date).AddHours(-1)';
@@ -407,6 +488,15 @@ export async function appErrors(sinceIso) {
     command: `$e = Get-WinEvent -FilterHashtable @{LogName='Application'; Level=1,2; StartTime=${since}} -ErrorAction SilentlyContinue | ` +
       `ForEach-Object { [pscustomobject]@{ time = $_.TimeCreated.ToString('o'); source = $_.ProviderName; id = $_.Id; message = $_.Message } }; ` +
       `if ($e) { ConvertTo-Json @($e) -Depth 3 -Compress } else { '[]' }`,
+    timeoutSec: 60,
+  });
+  try { return [].concat(JSON.parse(r.stdout.trim() || '[]')); } catch { return []; }
+}
+
+/** Running processes: pid, name, path (path is empty when Windows will not tell us). */
+export async function processes() {
+  const r = await exec({
+    command: '$p = Get-Process | ForEach-Object { [pscustomobject]@{ pid = $_.Id; name = $_.ProcessName; path = [string]$_.Path } }; ConvertTo-Json @($p) -Compress',
     timeoutSec: 60,
   });
   try { return [].concat(JSON.parse(r.stdout.trim() || '[]')); } catch { return []; }
