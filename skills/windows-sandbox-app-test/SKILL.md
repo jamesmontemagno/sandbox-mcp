@@ -44,6 +44,8 @@ no winget. It has Windows PowerShell 5.1 and .NET Framework 4.8. Treat it like a
 
 ## Tips
 
+- If a tool says "Windows Sandbox isn't ready on this PC", pass its fix list on to the user (it usually needs an
+  admin command and a restart); don't try to work around it. `sbx doctor` re-checks.
 - One sandbox at a time: if `sandbox_start` says one is running, stop it (or ask the user if it isn't ours).
 - Boot is fresh every time, so install prerequisites (VC++ runtime, .NET runtime, WebView2) inside the run if the
   app needs them; a missing prerequisite is often exactly the bug being hunted.

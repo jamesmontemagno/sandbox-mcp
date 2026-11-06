@@ -77,6 +77,7 @@ Step by step
   stop [--force]                     Destroy the sandbox (--force: also one not started by sbx)
 
 Other
+  doctor                             Check this PC can run Windows Sandbox, and say how to fix it if not
   mcp                                Run the MCP server on stdio
   help | version
   --json                             Machine-readable output for any command
@@ -153,6 +154,14 @@ async function main(argv) {
     case 'mcp':
       await import('./server.js');
       return null; // keep running
+
+    case 'doctor': {
+      const r = await sbx.checkSandbox();
+      out(opt, r, () => `${sbx.formatChecks(r.checks)}\n\n${r.ok
+        ? 'Ready. Try: sbx run C:\\Windows\\System32\\charmap.exe --open'
+        : 'Fix the ❌ items above (in order), then run "sbx doctor" again.'}`);
+      return r.ok ? 0 : 1;
+    }
 
     case 'start':
       out(opt, await sbx.startSandbox(startOpts(opt)), (r) =>

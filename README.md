@@ -81,14 +81,52 @@ install, launch and work on a clean PC, and what does it look like?"* as quickly
 - **Collect evidence:** every run keeps screenshots, copied-out files, a markdown report and an audit log on the
   host after the sandbox is gone.
 
-## Requirements
+## Turn on Windows Sandbox
 
-- Windows 11 24H2 or later, Pro / Enterprise / Education (Windows Sandbox isn't available on Home).
-- Windows Sandbox enabled: `Enable-WindowsOptionalFeature -Online -FeatureName Containers-DisposableClientVM`
-  (as admin, then reboot), or *Turn Windows features on or off* > *Windows Sandbox*.
-- **Launch Windows Sandbox from the Start menu once.** That updates it to the Store version, which includes the
-  `wsb` command-line tool this project drives. Check with `wsb --version`.
-- Node.js 20+.
+If you have Windows Pro, Enterprise or Education, you already own one of the best tools in Windows and it's probably
+switched off. [Windows Sandbox](https://learn.microsoft.com/windows/security/application-security/application-isolation/windows-sandbox/windows-sandbox-overview)
+is a whole, real Windows desktop that:
+
+- **comes with Windows:** nothing to download, no VHD, no license key. It's built from the Windows you're running.
+- **is brand new every time:** it boots as clean as the day Windows was installed, in about 15 seconds.
+- **is thrown away when you close it:** every file, registry key and installed app is deleted. Nothing leaks back.
+- **is properly isolated:** it runs on its own kernel behind the Microsoft hypervisor (the same hardware
+  virtualization as Hyper-V), not just a separate user account.
+- **is light:** it shares memory and files with your PC where it safely can, and uses your GPU.
+
+Turn it on with one line in an **admin** PowerShell, then restart:
+
+```powershell
+Enable-WindowsOptionalFeature -Online -FeatureName Containers-DisposableClientVM -All
+```
+
+(Or *Turn Windows features on or off* > tick *Windows Sandbox*.) After the restart, **open Windows Sandbox from the
+Start menu once**. That updates it to the Store version, which includes the `wsb` command-line tool this project
+drives. Then check everything with:
+
+```powershell
+sbx doctor
+```
+
+```text
+✅ Windows 11 Pro, build 26100
+✅ Windows Sandbox feature is on
+✅ Virtualization is on
+✅ wsb command-line tool: C:\Users\you\AppData\Local\Microsoft\WindowsApps\wsb.exe (Windows Sandbox 0.8.107.0)
+✅ Node.js 22.11.0
+
+Ready. Try: sbx run C:\Windows\System32\charmap.exe --open
+```
+
+If something's missing, `sbx doctor` says what and how to fix it, and every other command tells you the same thing
+if it can't reach Windows Sandbox. The full list of what you need:
+
+- Windows 11 24H2 (build 26100) or later, Pro / Enterprise / Education. Windows Sandbox isn't available on Home.
+- Virtualization turned on in your PC's UEFI/BIOS (Intel VT-x or AMD-V). Most PCs ship with it on.
+- At least 4 GB of RAM (8 GB recommended), 2 CPU cores and 1 GB of free disk.
+- Running inside a VM? Turn on nested virtualization on the host first:
+  `Set-VMProcessor -VMName <name> -ExposeVirtualizationExtensions $true`.
+- Node.js 20+ (`winget install OpenJS.NodeJS.LTS`).
 
 ## Quick start
 
@@ -98,6 +136,7 @@ cd sandbox-mcp
 npm install
 npm link            # puts `sbx` and `sandbox-mcp` on your PATH (or use `node src/cli.js`)
 
+sbx doctor                                         # is Windows Sandbox ready? (see above)
 sbx run C:\Windows\System32\charmap.exe --open     # try it on something that exists everywhere
 ```
 
@@ -179,6 +218,7 @@ sbx ui [tree] [--pid <pid>]                  sbx ui click --name Save
 sbx ui set --id NameBox --value Scott        sbx ui wait --name "Saved" --timeout 10
 sbx snapshot <name> [--exclude <path>]...    sbx diff <from> <to>
 sbx click <x> <y>   sbx type "text" [--keys] sbx errors   sbx status   sbx stop
+sbx doctor                                   # can this PC run Windows Sandbox? how to fix it if not
 sbx mcp                                      # run the MCP server
 ```
 

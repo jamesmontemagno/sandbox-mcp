@@ -27,11 +27,78 @@ function wsb(args, timeoutMs = 120_000) {
     execFile('wsb.exe', [...args, '--raw'], { timeout: timeoutMs, windowsHide: true }, (err, stdout, stderr) => {
       const text = `${stdout}${stderr}`.trim();
       try { return resolve(JSON.parse(stdout)); } catch {}
-      if (err?.code === 'ENOENT') return reject(new Error('wsb.exe not found. Install/update Windows Sandbox (Windows 11 24H2+) and launch it once from Start.'));
-      if (err || text) return reject(new Error(`wsb ${args[0]}: ${text || err.message}`));
-      resolve({});
+      const missing = err?.code === 'ENOENT';
+      if (!missing && !err && !text) return resolve({});
+      const e = new Error(missing ? 'wsb.exe not found. Install/update Windows Sandbox (Windows 11 24H2+) and launch it once from Start.'
+        : `wsb ${args[0]}: ${text || err.message}`);
+      // list and start are the first calls anything makes, so a failure there is worth explaining.
+      if (missing || ['list', 'start'].includes(args[0])) explainNotReady(e, missing ? 'wsb.exe not found' : e.message).then(reject); else reject(e);
     });
   });
+}
+
+// ---------- is this PC ready for Windows Sandbox? ----------
+
+export const ENABLE_SANDBOX = 'Enable-WindowsOptionalFeature -Online -FeatureName Containers-DisposableClientVM -All';
+
+// Non-admin probe. Win32_OptionalFeature InstallState: 1 enabled, 2 disabled, 3 absent.
+const PROBE = `$ErrorActionPreference = 'SilentlyContinue'
+$os = Get-CimInstance Win32_OperatingSystem
+$alias = Join-Path $env:LOCALAPPDATA 'Microsoft\\WindowsApps\\wsb.exe'
+[ordered]@{
+  caption = "$($os.Caption)" -replace '^Microsoft ', ''
+  build = [int]$os.BuildNumber
+  edition = (Get-ItemProperty 'HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion').EditionID
+  feature = (Get-CimInstance Win32_OptionalFeature -Filter "Name='Containers-DisposableClientVM'").InstallState
+  hypervisor = [bool](Get-CimInstance Win32_ComputerSystem).HypervisorPresent
+  vt = (Get-CimInstance Win32_Processor | Select-Object -First 1).VirtualizationFirmwareEnabled
+  wsb = (Get-Command wsb.exe).Source
+  alias = $(if (Test-Path $alias) { $alias })
+  version = "$((Get-AppxPackage MicrosoftWindows.WindowsSandbox).Version)"
+} | ConvertTo-Json -Compress`;
+
+/** Check whether this PC can run Windows Sandbox (and sbx). Takes a few seconds. */
+export async function checkSandbox() {
+  const facts = await new Promise((resolve, reject) => {
+    execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', PROBE], { timeout: 60_000, windowsHide: true }, (err, stdout) => {
+      try { resolve(JSON.parse(stdout)); } catch { reject(new Error(`could not check Windows Sandbox: ${err?.message || stdout}`)); }
+    });
+  });
+  facts.node = process.versions.node;
+  const checks = sandboxChecks(facts);
+  return { ok: checks.every((c) => c.ok), checks, facts };
+}
+
+/** What's missing and how to fix it, from the facts checkSandbox() gathers. */
+export function sandboxChecks(f) {
+  const checks = [];
+  const add = (ok, detail, fix) => checks.push(ok ? { ok, detail } : { ok, detail, fix });
+  if (/^Core/i.test(f.edition || '')) {
+    add(false, `${f.caption} doesn't include Windows Sandbox (Home editions don't)`,
+      'Upgrade to Windows 11 Pro, Enterprise or Education (Settings > System > Activation).');
+    return checks;
+  }
+  add(f.build >= 26100, `${f.caption}, build ${f.build}`,
+    'Update to Windows 11 24H2 (build 26100) or later. Older builds have Windows Sandbox but not the wsb command-line tool sbx drives.');
+  const on = f.feature === 1;
+  add(on, `Windows Sandbox feature is ${on ? 'on' : 'off'}`, `In an admin PowerShell run: ${ENABLE_SANDBOX}  (then restart)`);
+  if (f.hypervisor) add(true, 'Virtualization is on');
+  else if (f.vt === false) add(false, "Virtualization is turned off in this PC's firmware", 'Turn on Intel VT-x or AMD-V (SVM) in the UEFI/BIOS settings, then restart.');
+  else if (on) add(false, "Windows Sandbox is enabled but isn't running yet", 'Restart Windows.');
+  if (f.wsb) add(true, `wsb command-line tool: ${f.wsb}${f.version ? ` (Windows Sandbox ${f.version})` : ''}`);
+  else if (f.alias) add(false, `wsb.exe is installed but not on PATH (${f.alias})`, `Add ${path.dirname(f.alias)} to PATH.`);
+  else add(false, "The wsb command-line tool isn't installed",
+    'Open Windows Sandbox from the Start menu once, then close it: it updates itself from the Microsoft Store, which adds wsb.');
+  add(Number(String(f.node).split('.')[0]) >= 20, `Node.js ${f.node}`, 'Install Node.js 20 or later: winget install OpenJS.NodeJS.LTS');
+  return checks;
+}
+
+export const formatChecks = (checks) => checks.map((c) => `${c.ok ? '✅' : '❌'} ${c.detail}${c.ok ? '' : `\n   Fix: ${c.fix}`}`).join('\n');
+
+async function explainNotReady(e, reason) {
+  const r = await checkSandbox().catch(() => null);
+  if (!r || r.ok) return e;
+  return new Error(`Windows Sandbox isn't ready on this PC (${reason}):\n${formatChecks(r.checks.filter((c) => !c.ok))}\nRun "sbx doctor" to check again.`);
 }
 
 export async function listSandboxes() {
