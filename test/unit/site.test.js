@@ -39,6 +39,9 @@ test('site positions the CLI as standalone and MCP as optional', () => {
 test('site removes screenshot galleries and keeps compatibility timings and CLI examples', () => {
   assert.doesNotMatch(html, /Measured, not promised|id="measured"|#measured/i);
   assert.doesNotMatch(html, /assets\/(?:compat-(?:native|wpf|winui)\.png|sandbox-teaser\.gif|haptics-teaser\.png)/i);
+  for (const image of ['compat-native.png', 'compat-wpf.png', 'compat-winui.png', 'sandbox-teaser.gif', 'haptics-teaser.png']) {
+    assert.ok(!fs.existsSync(new URL(`../../site/assets/${image}`, import.meta.url)), `site still ships ${image}`);
+  }
   assert.match(html, /id="compatibility"/);
   assert.match(html, /App type<\/th><th scope="col">Packaging<\/th>/);
   assert.equal((html.match(/class="yes">PASS<\/td><td>\d+\.\d+ \/ \d+\.\d+ s/g) ?? []).length, 7);
