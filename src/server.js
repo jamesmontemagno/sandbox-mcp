@@ -72,7 +72,7 @@ server.registerTool('sandbox_stop', {
 }, tool(async (a) => {
   const r = await sbx.stopSandbox(a);
   startedTarget = null;
-  return text(r);
+  return { ...text(r), ...(r.recordingError ? { isError: true } : {}) };
 }));
 
 server.registerTool('sandbox_desktop_release', {
@@ -166,7 +166,26 @@ server.registerTool('sandbox_screenshot', {
   },
 }, tool(async (a) => {
   const s = await sbx.screenshot(a);
-  return image(s.previewBase64, `Saved ${s.path} (${s.width}x${s.height}); preview ${s.previewWidth}x${s.previewHeight}.`);
+  return image(s.previewBase64, `Saved ${s.path}; source bounds (${s.left},${s.top}) ${s.width}x${s.height}; preview ${s.previewWidth}x${s.previewHeight}, scale ${s.scale}; captureId ${s.captureId}.`);
+}));
+
+server.registerTool('sandbox_record_start', {
+  title: 'Record sandbox desktop',
+  description: 'Capture bounded desktop evidence in an independent guest process, including during long exec calls. Frames and metadata stream to the host share; no guest dependencies or network needed.',
+  inputSchema: {
+    fps: z.number().int().min(1).max(5).optional().describe('Frames per second (default 2).'),
+    maxDurationSec: z.number().int().min(1).max(300).optional().describe('Maximum duration (default 120 seconds).'),
+    maxFrames: z.number().int().min(1).max(600).optional().describe('Maximum frames (default fps * duration, capped at 600).'),
+  },
+}, tool(async (a) => text(await sbx.recordStart(a))));
+
+server.registerTool('sandbox_record_stop', {
+  title: 'Publish sandbox recording',
+  description: 'Stop the tracked recorder and publish a self-contained HTML flipbook, plus MP4 when host ffmpeg is available. Keeps raw frames and manifest even on failure. Also publishes partial evidence after a guest crash.',
+  inputSchema: {},
+}, tool(async () => {
+  const r = await sbx.recordStop();
+  return { ...text(r), ...(!r.stopped ? { isError: true } : {}) };
 }));
 
 server.registerTool('sandbox_click', {
@@ -178,6 +197,7 @@ server.registerTool('sandbox_click', {
     button: z.enum(['left', 'right']).optional(),
     double: z.boolean().optional(),
     coordinates: z.enum(['screenshot', 'screen']).optional().describe('screenshot (default) or raw sandbox screen pixels.'),
+    captureId: z.string().optional().describe('Screenshot to map coordinates against (default latest). Moved/resized windows are rejected.'),
   },
 }, tool(async ({ coordinates = 'screenshot', ...a }) => text(await sbx.click({ ...a, coordinates }))));
 
@@ -267,6 +287,7 @@ server.registerTool('sandbox_run', {
     args: z.string().optional(),
     console: z.boolean().optional().describe('Console app: run to completion and capture stdout instead of launching a window.'),
     provision: z.string().optional().describe('Explicit opt-in: auto or comma-separated runtime list (e.g. desktop:10.0:x64,vcredist:x64). Host downloads and verifies installers; guest can stay offline. Marks this run PROVISIONED, never a clean-machine pass. Omit for a true clean-machine test.'),
+    record: z.boolean().optional().describe('Record desktop evidence at 2 fps for up to 120 seconds; report links HTML and optional MP4.'),
     waitSec: z.number().min(0).optional().describe('GUI apps: seconds to let the app settle before observing (default 5).'),
     test: z.string().optional().describe('Host path to a .ps1 run inside after launch. Gets $env:SBX_APP_PID, SBX_APP_DIR, SBX_APP_EXE, SBX_OUT. Non-zero exit = fail.'),
     collect: z.array(z.string()).optional().describe('Sandbox paths to copy back to the host afterwards (logs, output files).'),

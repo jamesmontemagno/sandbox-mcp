@@ -28,7 +28,7 @@ export async function shot(args) {
 
 /**
  * app: host .exe (copy its whole folder), folder (+ exe), or MSIX/Appx package/bundle.
- * Options: exe, cert, deps, appId, args, waitSec, console, timeoutSec, test, testTimeoutSec, collect[], keep, plus startSandbox options.
+ * Options: exe, cert, deps, appId, args, waitSec, console, record, timeoutSec, test, testTimeoutSec, collect[], keep, plus startSandbox options.
  */
 export async function runApp(o) {
   const src = path.resolve(o.app);
@@ -59,7 +59,7 @@ export async function runApp(o) {
     const prepared = o.provision ? await prepareProvision(r.dependencies || { requirements: [], binaries: [] }, o.provision) : [];
     const boot = await sbx.startSandbox(o);
     booted = true;
-    r.sandbox = { id: boot.id, epoch: boot.epoch, network: boot.network, bootSeconds: boot.bootSeconds };
+    r.sandbox = { id: boot.id, epoch: boot.epoch, network: boot.network, bootSeconds: boot.bootSeconds, desktopReadySeconds: boot.desktopReadySeconds };
     r.runDir = boot.runDir; r.outDir = boot.outDir;
     const target = await sbx.current();
     if (!target || target.id !== boot.id || target.epoch !== boot.epoch) throw new Error('Sandbox changed after boot; refusing to provision a replacement.');
@@ -71,6 +71,7 @@ export async function runApp(o) {
       r.provisioned.push(record);
       recordProvisioning(r.runDir, o.provision, r.provisioned);
     }, target);
+    if (o.record) await sbx.recordStart();
     if (packaged) {
       sbx.log(`installing ${exe}`);
       r.package = await installPackage(src, packaged, o.appId, target);
@@ -113,6 +114,9 @@ export async function runApp(o) {
   } catch (e) {
     r.error = e.message;
   } finally {
+    if (booted && o.record) {
+      try { r.recording = await sbx.recordStop(); } catch (e) { r.recordingError = e.message; }
+    }
     if (booted && !o.keep) {
       sbx.log('destroying the sandbox');
       const st = await sbx.stopSandbox({ target: r.sandbox }).catch((e) => ({ error: e.message }));
@@ -127,6 +131,10 @@ export async function runApp(o) {
   r.failures = runFailures(r);
   r.dependencyFindings = classifyDependencyFailure(r);
   for (const finding of r.dependencyFindings) r.failures.push(finding.message);
+  if (r.recordingError) r.failures.push(`recording: ${r.recordingError}`);
+  if (r.recording?.stopped === false) r.failures.push('recorder did not stop; partial evidence retained');
+  if (r.recording?.partial) r.failures.push('recording is partial (see recording warnings)');
+  if (r.recording?.warnings.length) sbx.log(`recording: ${r.recording.warnings.join('; ')}`);
   r.pass = r.failures.length === 0;
 
   if (r.outDir) {
@@ -173,6 +181,7 @@ export function summary(r) {
   if (r.errors) row('crashes', r.crashes.length ? `${r.crashes.length} event(s): ${[...new Set(r.crashes.map((e) => e.source))].join(', ')}` : 'none');
   if (r.test) row('test', `${r.test.script} ${r.test.exitCode === 0 ? 'passed' : r.test.timedOut ? 'timed out' : `failed (exit ${r.test.exitCode})`}`);
   if (r.shots.length) row('shots', `${r.shots.length} screenshot(s)`);
+  if (r.recording) row('recording', r.recording.htmlPath);
   if (r.reportPath) row('report', r.reportPath);
   return lines.join('\n');
 }
@@ -195,6 +204,13 @@ export function renderReport(r) {
   ];
   if (r.package) lines.push(`| Package | \`${r.package.packageFullName}\` |`, `| AUMID | \`${r.package.aumid}\` |`, '');
   else lines.push('');
+  if (r.recording) {
+    lines.push('## Recording', '', `[Self-contained HTML flipbook](${rel(r.recording.htmlPath)})`,
+      ...(r.recording.mp4Path ? [`[MP4 video](${rel(r.recording.mp4Path)})`] : []),
+      '', `${r.recording.frames} frames; raw frames and [manifest](${rel(r.recording.manifestPath)}) retained.`, '');
+    for (const warning of r.recording.warnings) lines.push(`- ${warning}`);
+    lines.push('');
+  }
   if (r.shots.length) {
     lines.push('## Screenshots', '');
     for (const s of r.shots) lines.push(`**${s.name}** (${s.width}x${s.height})`, '', `![${s.name}](${rel(s.path)})`, '');

@@ -10,12 +10,15 @@ import { fileURLToPath } from 'node:url';
 import { atomicJson, readJson, withStateLock, retryFile, createDesktop } from './coordination.js';
 import { deployDirectory } from './deploy.js';
 import { PROTOCOL_VERSION, STALE_BOOT, agentHash, createFramer } from './protocol.js';
+import { mapCapturePoint } from './capture.js';
+import { recordingOptions, publishRecording } from './recording.js';
 
 export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 export const VERSION = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version;
 export const HOME = process.env.SANDBOX_MCP_HOME || path.join(process.env.LOCALAPPDATA || process.cwd(), 'sandbox-mcp');
 export const GUEST = { agent: 'C:\\sbx\\agent', in: 'C:\\sbx\\in', out: 'C:\\sbx\\out' };
 const STATE_FILE = path.join(HOME, 'current.json');
+const RECORDING_FILE = path.join(HOME, 'recording.json');
 const AGENT_PORT = 5985;
 const IDLE_MINUTES = Number(process.env.SANDBOX_MCP_IDLE_MINUTES ?? 30);
 const ALLOWED_ROOTS = (process.env.SANDBOX_MCP_ALLOWED_ROOTS || '').split(';').map((s) => s.trim()).filter(Boolean);
@@ -138,6 +141,7 @@ function configXml({ memoryMB, networking = true, vGpu = true }) {
 
 let verifiedId = null;
 const readState = () => readJson(STATE_FILE);
+const readRecording = () => readJson(RECORDING_FILE);
 function writeState(s) {
   withStateLock(HOME, () => {
     if (s) atomicJson(STATE_FILE, s); else retryFile(() => fs.rmSync(STATE_FILE, { force: true }));
@@ -371,9 +375,24 @@ export async function startSandbox({ network = 'on', internet, memoryMB, window 
     if (hello.protocolVersion !== identity.protocolVersion) throw new Error(`Sandbox protocol mismatch: expected ${identity.protocolVersion}, got ${hello.protocolVersion}`);
     if (hello.agentVersion !== identity.agentVersion || hello.agentSha256 !== identity.agentSha256) throw new Error('Sandbox agent identity mismatch: staged agent files do not match the running guest.');
     step(`agent up as ${hello.user}`);
+    let desktopFacts;
+    const desktop = await waitFor(async () => {
+      const facts = await agentCall(target, 'desktop', {}, 5000);
+      desktopFacts = facts;
+      return facts.ready && facts;
+    }, 60_000, 'interactive desktop (locked / secure desktop / UAC)').catch((e) => {
+      throw new Error(`${e.message}; last desktop facts: ${JSON.stringify(desktopFacts ?? null)}`);
+    });
+    step('desktop ready (Default input desktop, explorer, capture verified)');
+    target.desktop = desktop;
+    target.desktopReadySeconds = (Date.now() - t0) / 1000;
+    updateState(target, (state) => {
+      state.desktop = desktop;
+      state.desktopReadySeconds = target.desktopReadySeconds;
+    });
     const bootSeconds = (Date.now() - t0) / 1000;
-    audit(target, { op: 'start', network, memoryMB, bootSeconds, ok: true });
-    return { id, ip: target.ip, epoch, identity, network, runDir, outDir: path.join(runDir, 'out'), user: hello.user, bootSeconds, steps };
+    audit(target, { op: 'start', network, memoryMB, bootSeconds, desktopReadySeconds: target.desktopReadySeconds, desktop, steps, ok: true });
+    return { id, ip: target.ip, epoch, identity, network, runDir, outDir: path.join(runDir, 'out'), user: hello.user, desktop, desktopReadySeconds: target.desktopReadySeconds, bootSeconds, steps };
   } catch (e) {
     clearState(target); verifiedId = null;
     await wsb(['stop', '--id', id]).catch(() => {});
@@ -389,10 +408,14 @@ export async function stopSandbox({ force = false, target } = {}) {
     throw new Error(`A sandbox not started by sbx is running (${running.join(', ')}). Use force to stop it.`);
   }
   const toStop = mine ? running.filter((x) => x === mine.id) : force ? running : [];
+  let recording, recordingError;
+  if (mine?.recording || (!running.length && readRecording())) {
+    try { recording = await recordStop(); } catch (e) { recordingError = e.message; }
+  }
   for (const id of toStop) await wsb(['stop', '--id', id]);
   await waitFor(async () => (await listSandboxes()).length === 0, 30_000, 'sandbox to stop');
   if (toStop.length) await sleep(3000); // let the host settle before the next start
-  const result = { stopped: toStop };
+  const result = { stopped: toStop, ...(recording ? { recording } : {}), ...(recordingError ? { recordingError } : {}) };
   if (mine) {
     audit(mine, { op: 'stop', ok: true });
     fs.rmSync(path.join(mine.runDir, 'in'), { recursive: true, force: true });
@@ -425,7 +448,8 @@ export async function status() {
   const agent = await agentCall(s, 'ping', {}, 5000).then(() => 'ok', (e) => e.message);
   const provenance = path.join(s.runDir, 'provisioning.json');
   const provisioning = fs.existsSync(provenance) ? JSON.parse(fs.readFileSync(provenance, 'utf8')) : undefined;
-  return { running: true, id: s.id, ip: s.ip, epoch: s.epoch, identity: s.identity, network: s.network, startedAt: s.startedAt, runDir: s.runDir, outDir: path.join(s.runDir, 'out'), agent, provisioning };
+  const desktop = await agentCall(s, 'desktop', {}, 5000).catch((e) => ({ ready: false, error: e.message }));
+  return { running: true, id: s.id, ip: s.ip, epoch: s.epoch, identity: s.identity, network: s.network, startedAt: s.startedAt, runDir: s.runDir, outDir: path.join(s.runDir, 'out'), agent, provisioning, desktop, desktopReadySeconds: s.desktopReadySeconds, recording: s.recording ?? null };
 }
 
 // ---------- operations ----------
@@ -476,6 +500,41 @@ export async function processInfo(pid) { return call('process', { pid }); }
 
 export async function windows() { return [].concat((await call('windows')) ?? []); }
 
+export async function recordStart(options = {}) {
+  const limits = recordingOptions(options);
+  const s = await requireSandbox();
+  if (s.recording || readRecording()) throw new Error('A recording is already tracked. Stop it to publish its evidence first.');
+  const recordingId = randomBytes(16).toString('hex');
+  const directory = path.join(s.runDir, 'out', 'recordings', recordingId);
+  s.recording = { recordingId, directory, ...limits };
+  fs.writeFileSync(`${RECORDING_FILE}.tmp`, JSON.stringify({ id: s.id, recording: s.recording }));
+  fs.renameSync(`${RECORDING_FILE}.tmp`, RECORDING_FILE);
+  writeState(s);
+  const result = await call('recordstart', { recordingId, ...limits }, 30_000);
+  return { ...result, directory };
+}
+
+export async function recordStop() {
+  const state = readState();
+  const s = state?.recording ? state : readRecording();
+  if (!s?.recording) throw new Error('No tracked recording to stop.');
+  const recording = s.recording;
+  const warnings = [];
+  let stopped = true;
+  if ((await listSandboxes()).includes(s.id)) {
+    try { await call('recordstop', { recordingId: recording.recordingId }, 20_000); }
+    catch (e) { stopped = false; warnings.push(`Could not stop guest recorder: ${e.message}`); }
+  } else warnings.push('Sandbox is no longer running; publishing preserved partial evidence.');
+  try {
+    const result = await publishRecording(recording.directory, recording.fps);
+    return { recordingId: recording.recordingId, stopped, ...result, warnings: [...warnings, ...result.warnings] };
+  } finally {
+    const live = readState();
+    if (stopped && live?.id === s.id) { delete live.recording; writeState(live); }
+    if (stopped && readRecording()?.recording.recordingId === recording.recordingId) fs.rmSync(RECORDING_FILE);
+  }
+}
+
 export async function screenshot({ windowTitle, pid, name, maxWidth } = {}) {
   const s = await requireSandbox();
   const r = await call('screenshot', { windowTitle, pid, name, maxWidth }, 60_000, s);
@@ -484,23 +543,26 @@ export async function screenshot({ windowTitle, pid, name, maxWidth } = {}) {
   const preview = await waitFor(() => fs.existsSync(previewPath) && fs.readFileSync(previewPath), 10_000, 'screenshot file');
   fs.rmSync(previewPath, { force: true });
   updateState(s, (st) => {
-    st.lastShot = { scale: r.scale, left: r.left, top: r.top };
+    st.lastShot = r;
     (st.lastShots ||= {})[shotOwner] = st.lastShot;
+    (st.captures ||= {})[r.captureId] = r;
   });
-  return { path: path.join(dir, r.file), width: r.width, height: r.height, left: r.left, top: r.top,
+  return { captureId: r.captureId, scale: r.scale, path: path.join(dir, r.file), width: r.width, height: r.height, left: r.left, top: r.top,
     previewBase64: preview.toString('base64'), previewWidth: r.previewWidth, previewHeight: r.previewHeight };
 }
 
 /** coordinates: 'screenshot' = pixels in the last screenshot preview image; 'screen' = raw sandbox screen pixels. */
-export async function click({ x, y, button, double, coordinates = 'screen' }) {
+export async function click({ x, y, button, double, coordinates = 'screen', captureId }) {
+  if (!['screen', 'screenshot'].includes(coordinates)) throw new Error('coordinates must be screen or screenshot.');
+  if (![x, y].every(Number.isFinite)) throw new Error('x and y must be finite numbers.');
   let sx = x, sy = y;
+  const s = await requireSandbox();
   if (coordinates === 'screenshot') {
-    const shot = (await requireSandbox()).lastShots?.[shotOwner];
-    if (!shot) throw new Error('Take a screenshot first, or use screen coordinates.');
-    sx = Math.round(shot.left + x / shot.scale);
-    sy = Math.round(shot.top + y / shot.scale);
+    const shot = captureId ? s.captures?.[captureId] : s.lastShots?.[shotOwner];
+    ({ x: sx, y: sy } = mapCapturePoint(shot, x, y));
+    captureId = shot.captureId;
   }
-  return call('click', { x: sx, y: sy, button, double });
+  return call('click', { x: sx, y: sy, button, double, captureId }, 60_000, s);
 }
 
 export async function type({ keys, literal = true, windowTitle, pid }) {

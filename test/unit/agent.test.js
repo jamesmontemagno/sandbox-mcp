@@ -39,3 +39,34 @@ test('UIA uses inbox Framework references even when app cwd contains System.dll'
     assert.equal(out.trim().split(/\r?\n/).pop(), 'SbxUia');
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
+
+test('desktop probe compiles on PowerShell 5.1 and secure-desktop guard fails closed', () => {
+  const out = ps(`. '${agent('desktop.ps1')}'; function Get-DesktopFacts { @{ ready = $false; inputDesktop = 'Winlogon' } }; try { Assert-InteractiveDesktop; throw 'guard unexpectedly passed' } catch { $_.Exception.Message }`);
+  assert.match(out, /desktop not interactive \(locked \/ secure desktop \/ UAC\)/);
+});
+
+test('capture click rejects moved windows before delivering input', () => {
+  const out = ps(`
+    Add-Type -Namespace Sbx -Name Native -MemberDefinition 'public static bool IsWindow(System.IntPtr h) { return true; } public static bool IsIconic(System.IntPtr h) { return false; }';
+    $ast = [Management.Automation.Language.Parser]::ParseFile('${agent('agent.ps1')}', [ref]$null, [ref]$null);
+    $fn = $ast.Find({ param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Op-Click' }, $true);
+    . ([ScriptBlock]::Create($fn.Extent.Text));
+    function Get-WindowBounds { @{ Left=10; Top=0; Right=110; Bottom=100 } }
+    $script:captures = @{ old = @{ windowHandle='1234'; left=0; top=0; width=100; height=100 } };
+    try { Op-Click ([pscustomobject]@{ captureId='old' }); throw 'input delivered unexpectedly' } catch { $_.Exception.Message }
+  `);
+  assert.match(out, /Captured window moved, resized, minimized or closed/);
+});
+test('capture guard rejects a desktop transition or changed display bounds', () => {
+  const out = ps(`
+    . '${agent('desktop.ps1')}';
+    function Get-DesktopFacts { @{ ready=$true; left=0; top=0; width=100; height=100 } }
+    foreach ($before in @(
+        @{ ready=$false; left=0; top=0; width=100; height=100 },
+        @{ ready=$true; left=0; top=0; width=101; height=100 }
+    )) {
+        try { Assert-CaptureDesktop $before; throw 'capture guard unexpectedly passed' } catch { $_.Exception.Message }
+    }
+  `);
+  assert.equal(out.trim().split(/\r?\n/).filter((line) => line.includes('display bounds changed')).length, 2, out);
+});

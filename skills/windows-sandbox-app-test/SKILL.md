@@ -46,7 +46,17 @@ For a guest already started with the step tools, use `sandbox_provision` / `sbx 
      `select`, `expand`, `read`, ... Returns `{pending:true}` if a modal dialog opened; that is normal.
    - `sandbox_ui_wait` for a result label, dialog or state to appear.
    - `sandbox_screenshot` for visual checks; `sandbox_click` / `sandbox_type` only when UIA can't see the control
-     (custom-drawn, games, some Chromium content). Click coordinates refer to the last screenshot.
+     (custom-drawn, games, some Chromium content). Click coordinates refer to the last screenshot by default;
+     pass its `captureId` when using an older image. Out-of-image points and moved/resized captured windows
+     fail explicitly: take a new screenshot. CLI: `sbx click x y --coordinates screenshot --capture-id <id>`.
+   - Start waits for the Default input desktop, explorer and a successful capture. Status reports these facts.
+     Screenshot, click, type and UI actions fail closed on a locked or secure desktop (including UAC).
+   - To preserve a session visually, `sandbox_record_start` / `sandbox_record_stop` (CLI: `sbx record start|stop`).
+     Defaults: 2 fps, 120 seconds; caps: 5 fps, 300 seconds, 600 frames. A separate guest process streams PNGs
+     and timestamp/bounds/scale/foreground metadata to the host share even during long exec calls.
+     Stop publishes a self-contained HTML flipbook, plus MP4 if host ffmpeg is already available.
+     Partial frames survive crashes. One-shot `sandbox_run` accepts `record: true` (`sbx run --record`);
+     its report links the evidence. No extra software is installed in the guest.
 5. `sandbox_app_errors` (since `launchedAt`) to catch crashes and .NET unhandled exceptions.
 6. `sandbox_copy_out` logs, output files, crash dumps.
 7. `sandbox_stop`. Everything inside is gone; artifacts stay on the host in the run's `out` folder.

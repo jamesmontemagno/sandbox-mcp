@@ -290,8 +290,8 @@ incremental deployment never adopts an unrelated sandbox.
 | Tool | What it does |
 |---|---|
 | `sandbox_run` | The whole loop in one call: boot, copy in, launch or run, observe, test script, collect, destroy, report. |
-| `sandbox_start` | Boot a fresh sandbox (`network`: on / firewall / off, `memoryMB`, `vGpu`). Waits until the guest agent answers. |
-| `sandbox_status` | Is one running, its id/IP/network mode, is the agent healthy. |
+| `sandbox_start` | Boot a fresh sandbox (`network`: on / firewall / off, `memoryMB`, `vGpu`). Waits for the agent and an interactive desktop; reports readiness timings. |
+| `sandbox_status` | Is one running, its id/IP/network mode, agent health and current interactive-desktop facts. |
 | `sandbox_desktop_release` | End this workflow's desktop turn immediately. |
 | `sandbox_stop` | Destroy it. Lists the artifacts left on the host. |
 | `sandbox_copy_in` | Copy a host file or folder in (default `C:\apps\<name>`). |
@@ -301,8 +301,9 @@ incremental deployment never adopts an unrelated sandbox.
 | `sandbox_launch` | Start a GUI app without waiting; returns pid and main window. |
 | `sandbox_process` | Running? Exit code? Window title? |
 | `sandbox_windows` | Visible top-level windows with titles, pids and bounds. |
-| `sandbox_screenshot` | PNG of the desktop or one window, returned inline (and saved on the host). |
-| `sandbox_click` / `sandbox_type` | Mouse and keyboard, in screenshot coordinates / SendKeys syntax. |
+| `sandbox_screenshot` | PNG of the desktop or one window, returned inline (and saved on the host), with its own `captureId`, bounds and scale. |
+| `sandbox_record_start` / `sandbox_record_stop` | Bounded desktop recording: frames stream straight to the host share; stop publishes a self-contained HTML flipbook and MP4 if host ffmpeg is available. |
+| `sandbox_click` / `sandbox_type` | Mouse and keyboard, in screenshot coordinates / SendKeys syntax. Click accepts `captureId` (default latest); out-of-image points and moved/resized captured windows are rejected. |
 | `sandbox_ui_tree` | The UI Automation tree of a window: type, name, automation id, value, state, supported actions. |
 | `sandbox_ui_action` | Find a control by name / automation id / type and click, set a value, toggle, select, expand, read... |
 | `sandbox_ui_wait` | Wait for a control (a result, a dialog) to appear. |
@@ -326,6 +327,7 @@ sbx push <host path> [sandbox path]          sbx pull <sandbox path> [name]
 sbx deploy <hostDir> [guestDir] [--launch <exe>] [--args "..."] [--restart]
 sbx exec [--cmd] [--cwd <dir>] <command...>  sbx launch <exe> [--args "..."]
 sbx shot [--window <title>|--pid <pid>]      sbx windows   sbx proc <pid>
+sbx record start [--fps 2 --duration 120]   sbx record stop
 sbx ui [tree] [--pid <pid>]                  sbx ui click --name Save
 sbx ui set --id NameBox --value Scott        sbx ui wait --name "Saved" --timeout 10
 sbx snapshot <name> [--exclude <path>]...    sbx diff <from> <to>
@@ -377,6 +379,28 @@ The equivalent `sandbox_run` inputs are `app`, `cert`, `deps` and `appId`. `sand
 instead of `path`, and the CLI also recognizes `shell:AppsFolder\PackageFamilyName!ApplicationId`.
 Tests receive `$env:SBX_APP_AUMID` as well as the usual process/executable paths. Installed package directories
 are read-only: write test output to `$env:SBX_OUT` or an app-data directory, not `$env:SBX_APP_DIR`.
+
+## Recording and capture coordinates
+
+For visual evidence across an entire session, use `sbx run <app> --record` (MCP: `sandbox_run` with
+`record: true`), or `sbx record start` / `sbx record stop` for interactive work. Recording runs in a separate
+guest process, including while a long command is running. Defaults: 2 fps, 120 seconds; hard limits:
+5 fps, 300 seconds, 600 frames. `--max-frames` sets a smaller frame budget. Frames (up to 1280 pixels wide)
+and append-only `frames.jsonl` metadata go directly to `out\recordings\<id>`; partial evidence survives
+a guest crash or timeout. Stop publishes `recording.html` with embedded images and playback controls,
+plus `recording.mp4` when ffmpeg is already on the host PATH. No guest installation or network is needed.
+MP4 uses the requested frame rate; the HTML player preserves captured timestamps. Neither format includes audio.
+The run report links the artifacts. `sbx stop` also publishes any tracked recording before destroying the guest.
+After a guest crash or abrupt MCP disconnect, `sbx record stop` can still publish the preserved partial evidence,
+even if `sbx status` already noticed the guest is gone. Truncated final recorder status is reported as partial,
+not allowed to hide otherwise valid frames; malformed frame metadata is still rejected.
+
+Start verifies the Default input desktop, explorer shell, screen size and a successful capture before declaring
+ready. Screenshot, click, type and UI actions reject locked/secure desktops (including UAC) explicitly.
+Screenshot coordinates are pixels in the returned preview, not the full-resolution saved PNG.
+MCP clicks default to the latest screenshot; use `captureId` to select an earlier image. CLI clicks still default
+to raw screen pixels: use `--coordinates screenshot --capture-id <id>` for a preview. Captured windows that
+move, resize, minimize or close must be captured again before clicking.
 
 ## Test scripts
 

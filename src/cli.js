@@ -23,6 +23,7 @@ One shot
       --args "<args>"                Arguments for the app
       --console                      Console app: run to completion and capture output
       --provision <auto|list>         OPT IN: install verified runtimes; report is NOT a clean-machine pass
+      --record                       Record desktop evidence (HTML flipbook, MP4 if host ffmpeg is available)
       --wait <sec>                   Let a GUI app settle before observing (default 5)
       --test <script.ps1>            Run a test script inside afterwards ($env:SBX_APP_PID, SBX_APP_DIR, SBX_OUT)
       --collect <sandbox path>       Copy a file/folder back out afterwards (repeatable)
@@ -57,6 +58,8 @@ Step by step
   start [--network on|firewall|off] [--offline] [--memory <MB>] [--no-gpu] [--minimized]
   status
   desktop-release                    Release this workflow's desktop turn (SANDBOX_MCP_WORKFLOW)
+  record start [--fps <1-5>] [--duration <1-300>] [--max-frames <1-600>]
+  record stop                        Publish self-contained HTML and optional MP4; raw frames are retained
   push <host path> [sandbox path]    Copy a file/folder in (default C:\\apps\\<name>)
   deploy <hostDir> [guestDir] [--launch <exe>] [--args "<args>"] [--restart]
                                      Verified incremental copy into a warm sandbox; restart stops apps under guestDir
@@ -69,7 +72,8 @@ Step by step
   windows                            List windows on the sandbox desktop
   shot [--window <title>] [--pid <pid>] [--name <label>]
                                      Screenshot the desktop or one window; prints the PNG path
-  click <x> <y> [--right] [--double] Click at sandbox screen pixels
+  click <x> <y> [--right] [--double] [--coordinates screenshot --capture-id <id>]
+                                     Click at screen pixels (default), or pixels in a specific preview
   type <text> [--keys] [--window <title>] [--pid <pid>]
                                      Type text (--keys: SendKeys syntax like {ENTER} or ^s)
   ui [tree] [--pid <pid>|--window <title>] [--depth <n>] [--max <n>]
@@ -100,7 +104,8 @@ Data: ${sbx.HOME}`;
 
 // Options that take a value; everything else starting with -- is a boolean flag.
 const VALUE_OPTS = new Set(['network', 'memory', 'exe', 'args', 'wait', 'test', 'collect', 'cwd', 'timeout', 'window', 'pid', 'name', 'since',
-  'id', 'type', 'index', 'value', 'depth', 'max', 'uninstall', 'uninstall-args', 'exclude', 'duration', 'every', 'launch', 'provision', 'cert', 'deps', 'app-id']);
+  'id', 'type', 'index', 'value', 'depth', 'max', 'uninstall', 'uninstall-args', 'exclude', 'duration', 'every', 'launch', 'provision', 'cert', 'deps', 'app-id',
+  'coordinates', 'capture-id', 'fps', 'max-frames']);
 const REPEAT_OPTS = new Set(['collect', 'exclude']);
 
 function parse(argv) {
@@ -192,7 +197,7 @@ async function main(argv) {
 
     case 'status':
       out(opt, await sbx.status(), (s) => s.running
-        ? `Running: ${s.id} (network ${s.network}, since ${s.startedAt}, agent ${s.agent})\n` +
+        ? `Running: ${s.id} (network ${s.network}, since ${s.startedAt}, agent ${s.agent}, desktop ${s.desktop.ready ? 'interactive' : 'NOT interactive'})\n` +
           `Epoch: ${s.epoch}; protocol ${s.identity.protocolVersion}; agent ${s.identity.agentVersion}; SHA256 ${s.identity.agentSha256}` +
           `${s.provisioning ? '\nPROVISIONING OPT-IN: not a clean machine; see provisioning.json in the run folder.' : ''}\nArtifacts: ${s.outDir}`
         : `No sbx sandbox running.${s.otherSandboxes.length ? ` Other sandbox(es): ${s.otherSandboxes.join(', ')}` : ''}`);
@@ -202,10 +207,25 @@ async function main(argv) {
       out(opt, sbx.releaseDesktop());
       return 0;
 
-    case 'stop':
-      out(opt, await sbx.stopSandbox({ force: !!opt.force }), (r) =>
-        r.stopped.length ? `Stopped ${r.stopped.join(', ')}.${r.outDir ? ` Artifacts: ${r.outDir}` : ''}` : 'Nothing to stop.');
+    case 'record': {
+      if (pos[0] === 'start') out(opt, await sbx.recordStart({ fps: num(opt.fps, '--fps'),
+        maxDurationSec: num(opt.duration, '--duration'), maxFrames: num(opt['max-frames'], '--max-frames') }));
+      else if (pos[0] === 'stop') {
+        const r = await sbx.recordStop();
+        out(opt, r);
+        return r.stopped ? 0 : 1;
+      }
+      else throw new Error('usage: sbx record start|stop');
       return 0;
+    }
+
+    case 'stop': {
+      const r = await sbx.stopSandbox({ force: !!opt.force });
+      out(opt, r, () => (r.stopped.length ? `Stopped ${r.stopped.join(', ')}.${r.outDir ? ` Artifacts: ${r.outDir}` : ''}` : 'Nothing to stop.') +
+        (r.recording ? `\nRecording: ${r.recording.htmlPath}` : '') +
+        (r.recordingError ? `\nRecording publication failed: ${r.recordingError}` : ''));
+      return r.recordingError ? 1 : 0;
+    }
 
     case 'deploy': {
       need(1, 'deploy <hostDir> [guestDir] [--launch <exe>] [--args "<args>"] [--restart]');
@@ -259,13 +279,14 @@ async function main(argv) {
     case 'shot': {
       const r = await sbx.screenshot({ windowTitle: opt.window, pid: num(opt.pid, '--pid'), name: opt.name });
       const { previewBase64, ...rest } = r;
-      out(opt, rest, `${r.path} (${r.width}x${r.height})`);
+      out(opt, rest, `${r.path} (${r.width}x${r.height}); preview ${r.previewWidth}x${r.previewHeight}; captureId ${r.captureId}`);
       return 0;
     }
 
     case 'click': {
       need(2, 'click <x> <y> [--right] [--double]');
-      out(opt, await sbx.click({ x: num(pos[0], 'x'), y: num(pos[1], 'y'), button: opt.right ? 'right' : 'left', double: !!opt.double }), 'ok');
+      out(opt, await sbx.click({ x: num(pos[0], 'x'), y: num(pos[1], 'y'), button: opt.right ? 'right' : 'left', double: !!opt.double,
+        coordinates: opt.coordinates, captureId: opt['capture-id'] }), 'ok');
       return 0;
     }
 
@@ -348,7 +369,7 @@ async function main(argv) {
     case 'run': {
       need(1, 'run <app.exe|folder> [--exe <name>] [--args "..."] [--console] [--test <script.ps1>] [--collect <path>]... [--keep]');
       const r = await runApp({
-        app: pos[0], exe: opt.exe, args: opt.args, console: !!opt.console, waitSec: num(opt.wait, '--wait'), provision: opt.provision,
+        app: pos[0], exe: opt.exe, args: opt.args, console: !!opt.console, record: !!opt.record, waitSec: num(opt.wait, '--wait'), provision: opt.provision,
         cert: opt.cert, deps: opt.deps, appId: opt['app-id'],
         test: opt.test, collect: opt.collect, keep: !!opt.keep, timeoutSec: num(opt.timeout, '--timeout'), ...startOpts(opt),
       });

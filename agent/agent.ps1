@@ -14,12 +14,16 @@ Add-Type -Namespace Sbx -Name Native -MemberDefinition @'
 [DllImport("user32.dll")] public static extern bool SetForegroundWindow(System.IntPtr h);
 [DllImport("user32.dll")] public static extern bool ShowWindow(System.IntPtr h, int c);
 [DllImport("user32.dll")] public static extern bool IsIconic(System.IntPtr h);
+[DllImport("user32.dll")] public static extern bool IsWindow(System.IntPtr h);
 [DllImport("user32.dll")] public static extern bool GetWindowRect(System.IntPtr h, out RECT r);
 [DllImport("user32.dll")] public static extern bool PrintWindow(System.IntPtr h, System.IntPtr hdc, uint f);
 [DllImport("dwmapi.dll")] public static extern int DwmGetWindowAttribute(System.IntPtr h, int a, out RECT r, int size);
 [StructLayout(LayoutKind.Sequential)] public struct RECT { public int Left, Top, Right, Bottom; }
 '@
 [Sbx.Native]::SetProcessDPIAware() | Out-Null
+. (Join-Path $PSScriptRoot 'desktop.ps1')
+$script:captures = @{}
+. (Join-Path $PSScriptRoot 'recording.ps1')
 
 # Visible window bounds (excludes the invisible resize border that GetWindowRect includes).
 function Get-WindowBounds($h) {
@@ -158,6 +162,7 @@ function Op-Copy($req) {
 }
 
 function Op-Screenshot($req) {
+    $desktopBefore = Get-DesktopFacts
     $left = 0; $top = 0
     if ($req.windowTitle -or $req.pid) {
         # Focus + copy from screen (not PrintWindow) so DPI-virtualized apps are captured at their real size.
@@ -173,6 +178,7 @@ function Op-Screenshot($req) {
         $bmp = New-Object Drawing.Bitmap $b.Width, $b.Height
         $g = [Drawing.Graphics]::FromImage($bmp); $g.CopyFromScreen($b.Left, $b.Top, 0, 0, $bmp.Size); $g.Dispose()
     }
+    try { Assert-CaptureDesktop $desktopBefore } catch { $bmp.Dispose(); throw }
     $script:shotCount++
     $name = '{0:D3}-{1}' -f $script:shotCount, $(if ($req.name) { $req.name -replace '[^\w\-]', '_' } else { 'shot' })
     $full = Join-Path $shotDir "$name.png"; $bmp.Save($full, [Drawing.Imaging.ImageFormat]::Png)
@@ -183,8 +189,11 @@ function Op-Screenshot($req) {
     $g = [Drawing.Graphics]::FromImage($small); $g.InterpolationMode = 'HighQualityBicubic'
     $g.DrawImage($bmp, 0, 0, $sw, $sh); $g.Dispose()
     $preview = Join-Path $shotDir "$name.preview.png"; $small.Save($preview, [Drawing.Imaging.ImageFormat]::Png)
-    $res = @{ file = "$name.png"; preview = "$name.preview.png"; width = $bmp.Width; height = $bmp.Height
+    $captureId = [Guid]::NewGuid().ToString('N')
+    $res = @{ captureId = $captureId; file = "$name.png"; preview = "$name.preview.png"; width = $bmp.Width; height = $bmp.Height
               previewWidth = $sw; previewHeight = $sh; scale = $scale; left = $left; top = $top }
+    if ($h) { $res.windowHandle = $h.ToInt64().ToString() }
+    $script:captures[$captureId] = $res
     $bmp.Dispose(); $small.Dispose(); $res
 }
 
@@ -197,7 +206,27 @@ function Op-Windows($req) {
 }
 
 function Op-Click($req) {
-    [Sbx.Native]::SetCursorPos([int]$req.x, [int]$req.y) | Out-Null
+    if ($req.captureId) {
+        $shot = $script:captures[[string]$req.captureId]
+        if (-not $shot) { throw 'Unknown captureId; take another screenshot.' }
+        if ($shot.windowHandle) {
+            $h = [IntPtr][long]$shot.windowHandle
+            $r = Get-WindowBounds $h
+            if (-not [Sbx.Native]::IsWindow($h) -or [Sbx.Native]::IsIconic($h) -or $r.Left -ne $shot.left -or $r.Top -ne $shot.top -or
+                ($r.Right - $r.Left) -ne $shot.width -or ($r.Bottom - $r.Top) -ne $shot.height) {
+                throw 'Captured window moved, resized, minimized or closed; take another screenshot.'
+            }
+        } else {
+            $bounds = [Windows.Forms.SystemInformation]::VirtualScreen
+            if ($bounds.Left -ne $shot.left -or $bounds.Top -ne $shot.top -or
+                $bounds.Width -ne $shot.width -or $bounds.Height -ne $shot.height) {
+                throw 'Desktop bounds changed since capture; take another screenshot.'
+            }
+        }
+    }
+    if (-not [Sbx.Native]::SetCursorPos([int]$req.x, [int]$req.y)) {
+        throw 'desktop not interactive (locked / secure desktop / UAC): SetCursorPos failed'
+    }
     Start-Sleep -Milliseconds 50
     $down, $up = if ($req.button -eq 'right') { 0x08, 0x10 } else { 0x02, 0x04 }
     $n = $(if ($req.double) { 2 } else { 1 })
@@ -263,9 +292,13 @@ function Invoke-Request([string]$line) {
         $envelope = $line | ConvertFrom-Json
         if ($envelope.counter -gt 0 -and $envelope.counter -le 9007199254740991) { $counter = [long]$envelope.counter }
         $req = $protocol.Open($line, 'request', 0) | ConvertFrom-Json
+        if ($req.op -in @('screenshot', 'click', 'keys', 'uiaction')) { Assert-InteractiveDesktop }
         $result = switch ($req.op) {
             'ping'       { @{ user = "$env:USERDOMAIN\$env:USERNAME"; computer = $env:COMPUTERNAME; pid = $PID
                              epoch = $identity.epoch; protocolVersion = 2; agentVersion = $identity.agentVersion; agentSha256 = $agentHash } }
+            'desktop'    { Get-DesktopFacts }
+            'recordstart' { Op-RecordStart $req }
+            'recordstop'  { Op-RecordStop $req }
             'exec'       { Op-Exec $req }
             'launch'     { Op-Launch $req }
             'process'    { Op-Process $req }
