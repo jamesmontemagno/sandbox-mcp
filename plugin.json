@@ -7,8 +7,8 @@
     "name": "Scott Hanselman",
     "url": "https://github.com/shanselman"
   },
-  "homepage": "https://github.com/jamesmontemagno/sandbox-mcp/blob/main/docs/agent-plugin.md",
-  "repository": "https://github.com/jamesmontemagno/sandbox-mcp",
+  "homepage": "https://github.com/shanselman/sandbox-mcp/blob/main/docs/agent-plugin.md",
+  "repository": "https://github.com/shanselman/sandbox-mcp",
   "license": "MIT",
   "keywords": ["windows-sandbox", "windows", "sandbox", "testing", "installer", "ui-automation", "mcp"]
 }

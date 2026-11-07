@@ -18,7 +18,7 @@ sbx doctor
 If `sbx` isn't on PATH (the plugin only adds MCP tools), use:
 
 ```powershell
-npx --yes --package=github:jamesmontemagno/sandbox-mcp sbx doctor
+npx --yes --package=github:shanselman/sandbox-mcp sbx doctor
 ```
 
 Exit code 0 means ready. Exit code 1 lists each problem with its `Fix:` line; add `--json` for structured output. `sandbox_start` and the one-shot tools report the same list when they fail with "Windows Sandbox isn't ready on this PC".
@@ -39,7 +39,7 @@ Call `sandbox_run` with `app: "C:\\Windows\\System32\\charmap.exe"`, or run `sbx
 
 ## If the MCP tools don't appear
 
-The plugin starts the server with `cmd /d /c npx --yes github:jamesmontemagno/sandbox-mcp#<version>`, which needs Node.js 20 or later on PATH and network access for the first download. Run that command in a terminal to see the error; a working server logs `ready` to stderr and then waits on stdin. Press Ctrl+C to stop it.
+The plugin starts the server with `cmd /d /c npx --yes github:shanselman/sandbox-mcp#<version>`, which needs Node.js 20 or later on PATH and network access for the first download. Run that command in a terminal to see the error; a working server logs `ready` to stderr and then waits on stdin. Press Ctrl+C to stop it.
 
 ## If a sandbox is already running
 

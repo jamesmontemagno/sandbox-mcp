@@ -5,6 +5,7 @@
 Not your desktop. Not a container pretending to be Windows. **A real, disposable Windows 11 machine**:
 boot it, deploy your app, drive the controls, catch the crash, keep the evidence, delete the PC.
 One MCP tool call or `sbx run`. The measured GUI samples take roughly **40-50 seconds** end to end.
+See the [website](https://shanselman.github.io/sandbox-mcp/).
 
 ![Real offline Sandbox: Haptics app UI Automation, light-to-dark theme, app exit and guest teardown](docs/sandbox-teaser.gif)
 
@@ -350,11 +351,11 @@ The [agent plugin](docs/agent-plugin.md) bundles the MCP server and the skills, 
 or edit any MCP configuration. It needs Node.js 20 or later. With GitHub Copilot CLI:
 
 ```powershell
-copilot plugin marketplace add jamesmontemagno/sandbox-mcp
+copilot plugin marketplace add shanselman/sandbox-mcp
 copilot plugin install sandbox-mcp@sandbox-mcp
 ```
 
-In VS Code, add `jamesmontemagno/sandbox-mcp` as a marketplace in **Chat: Open Customizations**, or run
+In VS Code, add `shanselman/sandbox-mcp` as a marketplace in **Chat: Open Customizations**, or run
 **Chat: Install Plugin from Source**. See the [plugin guide](docs/agent-plugin.md) for details.
 
 ## Fast inner loop

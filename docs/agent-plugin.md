@@ -4,7 +4,7 @@ A portable [Agent Plugin](https://agent-plugins.org/) (spec 1.0.0) that gives AI
 
 | Component | What it adds |
 |---|---|
-| `mcp.json` | The `windows-sandbox` stdio MCP server, launched with `cmd /d /c npx --yes github:jamesmontemagno/sandbox-mcp#v<version>` |
+| `mcp.json` | The `windows-sandbox` stdio MCP server, launched with `cmd /d /c npx --yes github:shanselman/sandbox-mcp#v<version>` |
 | `skills/` | `windows-sandbox-setup`, `windows-sandbox-app-test`, `windows-sandbox-interactive`, `windows-sandbox-installer-test`, `windows-sandbox-detonate` |
 
 ## Before you install
@@ -16,7 +16,7 @@ A portable [Agent Plugin](https://agent-plugins.org/) (spec 1.0.0) that gives AI
 To check your PC, run the read-only readiness check:
 
 ```powershell
-npx --yes --package=github:jamesmontemagno/sandbox-mcp sbx doctor
+npx --yes --package=github:shanselman/sandbox-mcp sbx doctor
 ```
 
 ## Install
@@ -26,14 +26,14 @@ npx --yes --package=github:jamesmontemagno/sandbox-mcp sbx doctor
 From the marketplace:
 
 ```powershell
-copilot plugin marketplace add jamesmontemagno/sandbox-mcp
+copilot plugin marketplace add shanselman/sandbox-mcp
 copilot plugin install sandbox-mcp@sandbox-mcp
 ```
 
 Or install directly, with no marketplace:
 
 ```powershell
-copilot plugin install jamesmontemagno/sandbox-mcp
+copilot plugin install shanselman/sandbox-mcp
 ```
 
 To update or remove it later:
@@ -48,7 +48,7 @@ copilot plugin uninstall sandbox-mcp
 From the marketplace:
 
 1. Open **Chat: Open Customizations**, then select **Browse** > **Configure Marketplaces** > **Add Marketplace**.
-2. Add `jamesmontemagno/sandbox-mcp`.
+2. Add `shanselman/sandbox-mcp`.
 3. Browse the marketplace and install `sandbox-mcp`.
 
 Or install directly:
@@ -56,7 +56,7 @@ Or install directly:
 1. Run **Chat: Install Plugin from Source** from the Command Palette.
 2. Enter the repository URL:
    ```text
-   https://github.com/jamesmontemagno/sandbox-mcp.git
+   https://github.com/shanselman/sandbox-mcp.git
    ```
 
 Confirm `sandbox-mcp` is enabled in **Chat: Open Customizations** > **Plugins**, then start a new session and check its skills and MCP tools.

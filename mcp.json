@@ -4,7 +4,7 @@
     "windows-sandbox": {
       "type": "stdio",
       "command": "cmd",
-      "args": ["/d", "/c", "npx", "--yes", "github:jamesmontemagno/sandbox-mcp#v1.1.0"]
+      "args": ["/d", "/c", "npx", "--yes", "github:shanselman/sandbox-mcp#v1.1.0"]
     }
   }
 }

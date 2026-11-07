@@ -1,7 +1,7 @@
 {
   "name": "sandbox-mcp",
   "owner": {
-    "name": "jamesmontemagno"
+    "name": "shanselman"
   },
   "metadata": {
     "description": "Agent plugins for testing Windows apps on fresh, throwaway Windows Sandbox machines."

@@ -14,7 +14,7 @@ test('every version the plugin publishes matches package.json', () => {
   assert.equal(json('plugin.json').version, version);
   assert.equal(entry?.version, version);
   // The release workflow only publishes tags named v<package.json version>, so this is what a released plugin can fetch.
-  assert.equal(json('mcp.json').mcpServers['windows-sandbox'].args.at(-1), `github:jamesmontemagno/sandbox-mcp#v${version}`);
+  assert.equal(json('mcp.json').mcpServers['windows-sandbox'].args.at(-1), `github:shanselman/sandbox-mcp#v${version}`);
 });
 
 test('skills follow the Agent Skills naming rules', () => {
