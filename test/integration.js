@@ -67,6 +67,7 @@ try {
   ownedId = boot.id;
   ownedEpoch = boot.epoch;
   evidence.runDir = boot.runDir;
+  assert.equal(boot.desktop.ready, true);
   record('fresh guest started', { id: boot.id, bootSeconds: boot.bootSeconds, runDir: boot.runDir });
   assert.equal((await json('sandbox_status')).id, ownedId);
   assert.equal((await cli('status')).id, ownedId);
@@ -115,6 +116,16 @@ try {
   const capture = await call('sandbox_screenshot', { pid: launched.pid, name: `integration-${network}`, maxWidth: 400 });
   assert.ok(capture.result.content.some((part) => part.type === 'image' && part.data.length > 100));
   record('MCP image and screenshot artifact', capture.text);
+  const recordingStart = await json('sandbox_record_start', { fps: 2, maxDurationSec: 8, maxFrames: 6 });
+  await call('sandbox_exec', { command: 'Start-Sleep -Seconds 3' });
+  const recording = await json('sandbox_record_stop');
+  assert.equal(recording.recordingId, recordingStart.recordingId);
+  assert.equal(recording.frames, 6);
+  assert.equal(recording.stopped, true);
+  assert.equal(recording.partial, false, JSON.stringify(recording.warnings));
+  assert.ok(fs.statSync(recording.htmlPath).size > 10_000);
+  assert.equal(fs.readFileSync(recording.manifestPath, 'utf8').trim().split('\n').length, 6);
+  record('MCP bounded six-frame recording and durable self-contained viewer', recording);
   const deploySource = path.join(evidenceDir, `deploy-source-${network}`);
   fs.mkdirSync(deploySource, { recursive: true });
   fs.copyFileSync(path.join(root, 'samples', 'HelloSandbox', 'bin', 'HelloSandbox.exe'), path.join(deploySource, 'HelloSandbox.exe'));
