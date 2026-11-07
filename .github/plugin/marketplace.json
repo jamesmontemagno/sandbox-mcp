@@ -1,0 +1,17 @@
+{
+  "name": "sandbox-mcp",
+  "owner": {
+    "name": "shanselman"
+  },
+  "metadata": {
+    "description": "Agent plugins for testing Windows apps on fresh, throwaway Windows Sandbox machines."
+  },
+  "plugins": [
+    {
+      "name": "sandbox-mcp",
+      "description": "Let AI agents test Windows apps and installers, drive their UI, and see what untrusted files do, on a fresh, throwaway Windows Sandbox machine.",
+      "version": "1.2.0",
+      "source": "./"
+    }
+  ]
+}

@@ -24,8 +24,9 @@ Published-release workflows also upload the checksum alongside the versioned ZIP
 
 ## Publishing an authorized release
 
-1. **Bump the version:** `npm version X.Y.Z --no-git-tag-version` (updates `package.json` and the lockfile). Commit,
-   push to `main` and wait for `ci` to go green.
+1. **Bump the version:** `npm version X.Y.Z --no-git-tag-version` (updates `package.json` and the lockfile). Set the
+   same version in `plugin.json` and `.github/plugin/marketplace.json`, and the `#vX.Y.Z` tag in `mcp.json`;
+   `npm test` fails until they all match. Commit, push to `main` and wait for `ci` to go green.
 2. **Dry run:** `gh workflow run release.yml`, then `gh run watch`. It runs the tests, builds the ZIP, smoke-tests it and
    keeps it as the `sandbox-mcp-win-x64` artifact. It never touches a release. Do this before every release: the
    hosted runner is the only place the packaged CLI is tested on a PC that isn't yours.
@@ -35,11 +36,16 @@ Published-release workflows also upload the checksum alongside the versioned ZIP
 4. **Check the asset:** download `releases/latest/download/sandbox-mcp-win-x64-vX.Y.Z.zip`, compare its SHA256 with the
    digest GitHub shows, and run `node test/package-smoke.js <zip>`. Then do one real run, because CI can't boot a
    sandbox: extract it, take Node off PATH, and `sbx run C:\Windows\System32\charmap.exe --open`.
+5. **Check the plugin:** run `npm run test:plugin` on Windows. Without an override it starts the server from the new
+   tag, exactly as an installed plugin does.
 
 Roll back a bad release with `gh release delete vX.Y.Z --cleanup-tag --yes`.
 
 ## Things that have bitten us
 
+- **Publish soon after bumping.** `mcp.json` on `main` points at the new tag as soon as the bump lands, so a plugin
+  installed before the release is published can't start its server. Deleting a release's tag breaks plugins pinned to
+  it in the same way, so after a rollback, move `main` back to a version whose tag exists.
 - **The CI runner is Windows Server, not Windows Pro.** It has no Windows Sandbox and no `wsb`, so `sbx doctor` must
   degrade gracefully there. The first dry run caught `doctor --json` printing nothing on the runner.
 - **Keep the readiness probe in `src/core.js` to one PowerShell statement per fact.** It runs under
