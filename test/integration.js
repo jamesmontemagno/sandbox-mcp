@@ -43,7 +43,7 @@ try {
   await execute('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File',
     path.join(root, 'samples', 'HelloSandbox', 'build.ps1')], { cwd: root, timeout: 60_000 });
   await client.connect(new StdioClientTransport({
-    command: process.execPath, args: [path.join(root, 'src', 'server.js')], stderr: 'inherit',
+    command: process.execPath, args: [path.join(root, 'src', 'server.js')], stderr: 'inherit', env: { ...process.env },
   }));
   connected = true;
   const tools = (await client.listTools()).tools;

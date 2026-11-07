@@ -14,7 +14,7 @@ const check = (cond, what) => { console.log(`${cond ? 'ok  ' : 'FAIL'} ${what}`)
 
 async function connect() {
   const client = new Client({ name: 'offline-test', version: '1.0.0' });
-  await client.connect(new StdioClientTransport({ command: process.execPath, args: [path.join(root, 'src', 'server.js')], stderr: 'inherit' }));
+  await client.connect(new StdioClientTransport({ command: process.execPath, args: [path.join(root, 'src', 'server.js')], stderr: 'inherit', env: { ...process.env } }));
   const call = async (name, args = {}) => {
     const r = await client.callTool({ name, arguments: args }, undefined, { timeout: 600_000 });
     const txt = r.content.filter((c) => c.type === 'text').map((c) => c.text).join('\n');

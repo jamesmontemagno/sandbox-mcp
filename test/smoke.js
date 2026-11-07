@@ -16,7 +16,7 @@ say('building HelloSandbox on the host');
 execFileSync('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', path.join(root, 'samples', 'HelloSandbox', 'build.ps1')], { stdio: 'inherit' });
 
 const client = new Client({ name: 'smoke', version: '1.0.0' });
-await client.connect(new StdioClientTransport({ command: process.execPath, args: [path.join(root, 'src', 'server.js')], stderr: 'inherit' }));
+await client.connect(new StdioClientTransport({ command: process.execPath, args: [path.join(root, 'src', 'server.js')], stderr: 'inherit', env: { ...process.env } }));
 say(`tools: ${(await client.listTools()).tools.map((t) => t.name).join(', ')}`);
 
 async function call(name, args = {}) {
