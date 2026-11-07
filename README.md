@@ -42,10 +42,25 @@ They share state, so you can `sbx start`, let an agent poke at the app, then `sb
 
 ## Why
 
+**A Windows Sandbox showcase, not a framework gate.** WinUI 3 is welcome, but the entry point is a Windows
+executable or package, not a particular UI framework. Bring an app that can run in Sandbox and its prerequisites:
+Win32, WinForms, WPF, WinUI, console, PyInstaller or Electron builds use the same clean-machine workflow.
+Installers and untrusted files have their own audit/detonation workflows. This is not a promise that every
+Windows app or hardware-dependent workload works in Sandbox. See the [measured compatibility matrix](docs/compatibility.md)
+and [small source samples](https://github.com/shanselman/sandbox-mcp/tree/main/samples) for the configurations actually exercised.
+
+[winapp CLI's Sandbox execution](https://github.com/microsoft/winappCli/blob/5f379fb55517b7a47f9aad11885a7c1676dcca2e/docs/sandbox-execution.md)
+also supports packaged and unpackaged apps: its `--on sandbox` offers a warm, identity-aware developer loop,
+runtime preparation and WinUI diagnostics. sandbox-mcp emphasizes **fresh-by-default clean-machine reports**,
+network-off shared-folder mailbox transport, installer/uninstaller diffs and detonation. The tools have
+overlapping app support but different defaults and goals; no SDK or runtime is preinstalled in our guest
+unless explicitly requested.
+
 "It works on my machine" is usually true: your machine has every runtime, SDK, redistributable, font, registry key
 and PATH entry you ever installed. Your users' machines don't. Windows Sandbox is a pristine Windows that boots in
-seconds and is **deleted** when it closes, which makes it the perfect "brand-new customer PC". But it has no API:
-it was built for a person clicking around. sandbox-mcp makes it scriptable.
+seconds and is **deleted** when it closes, which makes it the perfect "brand-new customer PC". Its supported `wsb`
+CLI provides automation; sandbox-mcp adds orchestrated app deployment, UI Automation, clean-machine checks and
+durable test evidence around it.
 
 |                              | sandbox-mcp (Windows Sandbox)       | Hyper-V / VMware VM        | Windows containers           | Cloud dev VMs (devvm, Codespaces, Dev Box) |
 |------------------------------|-------------------------------------|----------------------------|------------------------------|--------------------------------------------|
@@ -289,7 +304,7 @@ incremental deployment never adopts an unrelated sandbox.
 
 | Tool | What it does |
 |---|---|
-| `sandbox_run` | The whole loop in one call: boot, copy in, launch or run, observe, test script, collect, destroy, report. |
+| `sandbox_run` | The whole loop in one call: boot, copy/install, launch or run, observe, test script, collect, destroy, report. |
 | `sandbox_start` | Boot a fresh sandbox (`network`: on / firewall / off, `memoryMB`, `vGpu`). Waits for the agent and an interactive desktop; reports readiness timings. |
 | `sandbox_status` | Is one running, its id/IP/network mode, agent health and current interactive-desktop facts. |
 | `sandbox_desktop_release` | End this workflow's desktop turn immediately. |
@@ -298,7 +313,7 @@ incremental deployment never adopts an unrelated sandbox.
 | `sandbox_deploy` | Deploy a host directory into an already running sandbox, transfer only changes and verify hashes; optional launch/restart. |
 | `sandbox_copy_out` | Copy a sandbox file or folder out to the run's `out\files`. |
 | `sandbox_exec` | Run a PowerShell (or `cmd`) command; returns stdout, stderr, exit code. |
-| `sandbox_launch` | Start a GUI app without waiting; returns pid and main window. |
+| `sandbox_launch` | Start an EXE or installed package AUMID; returns the app pid and main window. |
 | `sandbox_process` | Running? Exit code? Window title? |
 | `sandbox_windows` | Visible top-level windows with titles, pids and bounds. |
 | `sandbox_screenshot` | PNG of the desktop or one window, returned inline (and saved on the host), with its own `captureId`, bounds and scale. |
@@ -316,7 +331,8 @@ incremental deployment never adopts an unrelated sandbox.
 ## CLI
 
 ```text
-sbx run <app.exe|folder> [--exe <name>] [--args "<args>"] [--console] [--wait <sec>]
+sbx run <app.exe|folder|app.msix> [--exe <name>] [--args "<args>"] [--console] [--wait <sec>]
+                         [--cert <file.cer>] [--deps <folder>] [--app-id <id>]
                          [--test <script.ps1>] [--collect <sandbox path>]... [--keep] [--open]
 sbx install-test <setup.msi|.exe|.ps1|.cmd> [--args "/S"] [--uninstall auto|none|"<cmd>"]
                          [--uninstall-args "/S"] [--test <script.ps1>] [--fail-on-leftovers] [--exclude <path>]...
@@ -325,7 +341,7 @@ sbx detonate <file> [--args "<args>"] [--network off|firewall|on] [--duration <s
 sbx start [--network on|firewall|off] [--memory <MB>] [--no-gpu] [--minimized]
 sbx push <host path> [sandbox path]          sbx pull <sandbox path> [name]
 sbx deploy <hostDir> [guestDir] [--launch <exe>] [--args "..."] [--restart]
-sbx exec [--cmd] [--cwd <dir>] <command...>  sbx launch <exe> [--args "..."]
+sbx exec [--cmd] [--cwd <dir>] <command...>  sbx launch <exe|PackageFamilyName!AppId> [--args "..."]
 sbx shot [--window <title>|--pid <pid>]      sbx windows   sbx proc <pid>
 sbx record start [--fps 2 --duration 120]   sbx record stop
 sbx ui [tree] [--pid <pid>]                  sbx ui click --name Save
