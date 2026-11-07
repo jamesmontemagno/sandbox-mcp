@@ -1,0 +1,14 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "sandbox-mcp",
+  "version": "1.1.0",
+  "description": "Let AI agents test Windows apps and installers, drive their UI, and see what untrusted files do, on a fresh, throwaway Windows Sandbox machine.",
+  "author": {
+    "name": "Scott Hanselman",
+    "url": "https://github.com/shanselman"
+  },
+  "homepage": "https://github.com/jamesmontemagno/sandbox-mcp/blob/main/docs/agent-plugin.md",
+  "repository": "https://github.com/jamesmontemagno/sandbox-mcp",
+  "license": "MIT",
+  "keywords": ["windows-sandbox", "windows", "sandbox", "testing", "installer", "ui-automation", "mcp"]
+}

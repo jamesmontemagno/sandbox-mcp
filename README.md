@@ -172,7 +172,7 @@ of Windows Sandbox. The observed optional-component baseline for build 26100.988
 ## Download and try it (no Node.js install)
 
 Download the **Windows x64 portable ZIP** from the [latest GitHub release](https://github.com/shanselman/sandbox-mcp/releases/latest)
-and extract it. The ZIP includes `sbx`, the MCP server, their dependencies, the guest agent and skill, and a private
+and extract it. The ZIP includes `sbx`, the MCP server, their dependencies, the guest agent and skills, and a private
 Node.js runtime. You do not need to clone the repo, install Node/npm, or add anything to PATH.
 The package is built and tested on native Windows x64; ARM64 is not currently packaged.
 
@@ -340,8 +340,22 @@ An absolute Node path avoids differences between your terminal PATH and the MCP 
 Then ask: *"Build the app, run it in a fresh Windows Sandbox, type my name in the box, click Greet and show me a
 screenshot."*
 
-There's also an agent skill in [`skills/windows-sandbox-app-test`](skills/windows-sandbox-app-test/SKILL.md) that
-teaches agents the workflow; copy it into your agent's skills folder (for example `~/.copilot/skills/`).
+There are also agent skills in [`skills/`](skills) that teach agents each workflow: setup, clean-machine runs,
+interactive UI testing, installer testing and detonating untrusted files. Copy the ones you want into your agent's
+skills folder (for example `~/.copilot/skills/`), or install the plugin below to get them all with the MCP server.
+
+### Install the agent plugin
+
+The [agent plugin](docs/agent-plugin.md) bundles the MCP server and the skills, so you don't need to clone anything
+or edit any MCP configuration. It needs Node.js 20 or later. With GitHub Copilot CLI:
+
+```powershell
+copilot plugin marketplace add jamesmontemagno/sandbox-mcp
+copilot plugin install sandbox-mcp@sandbox-mcp
+```
+
+In VS Code, add `jamesmontemagno/sandbox-mcp` as a marketplace in **Chat: Open Customizations**, or run
+**Chat: Install Plugin from Source**. See the [plugin guide](docs/agent-plugin.md) for details.
 
 ## Fast inner loop
 

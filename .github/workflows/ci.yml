@@ -27,3 +27,8 @@ jobs:
           Get-ChildItem src\*.js | ForEach-Object { node --check $_.FullName; if ($LASTEXITCODE) { exit 1 } }
           node src/cli.js version
         shell: pwsh
+      - name: Agent plugin server starts through npx
+        run: npm run test:plugin
+        env:
+          # This commit, not the tag pinned in mcp.json: a version bump is pushed before its release tag exists.
+          SANDBOX_MCP_PLUGIN_SPEC: github:${{ github.event.pull_request.head.repo.full_name || github.repository }}#${{ github.event.pull_request.head.sha || github.sha }}
