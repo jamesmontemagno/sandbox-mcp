@@ -1,4 +1,42 @@
-# sandbox-mcp — automating Windows Sandbox like devvm.dev
+# sandbox-mcp - architecture and historical spike
+
+## Current implementation (unreleased feature preview)
+
+The public v1.1.0 release is the portable baseline. This revision additionally integrates coordinated CLI/MCP
+state, encrypted epoch-bound transport, verified incremental deployment, explicit runtime provisioning,
+MSIX/AUMID activation and bounded desktop recording. See [README](README.md) for setup and actual command
+schemas, and the [compatibility matrix](docs/compatibility.md) for measured app builds and limitations.
+
+```text
+MCP client --stdio--> src/server.js --+
+                                    +--> src/core.js --> wsb start/share/exec/ip/stop
+CLI -----------> src/cli.js --------+
+                                    +--> persistent interactive PowerShell guest agent
+                                         encrypted framed TCP (on/firewall), or mailbox (off)
+```
+
+The host shares three per-run folders: agent and staging read-only, output read-write. Bootstrap uses
+`wsb exec -r ExistingLogin` for the interactive agent, not a System desktop or LogonCommand. Start verifies
+protocol/agent identity and an interactive capturable Default desktop. State updates use short locks;
+transport sequence numbers and teardown ownership are bound to a boot epoch. Desktop-changing clients
+cooperate through explicit turns. These controls do not make guest output trusted.
+
+Implemented workflows include one-shot clean-machine GUI/console testing and reports, UI Automation,
+screenshots with capture-bound coordinates, incremental warm deployment, dependency diagnosis and opt-in
+verified provisioning, package install/AUMID activation, installer/uninstaller change tracking, detonation,
+and bounded recording with recoverable raw frames/self-contained HTML and optional host-encoded MP4.
+There is no general `sandbox_install`, read/write-file API or automatic winget/toolchain bootstrap.
+File transfer uses copy-in/out. `wsb` is required; there is no `.wsb` lifecycle fallback.
+
+`npm test` checks host/guest logic without a VM. `test\integration.js` drives actual CLI and MCP in
+on/firewall/off modes; `test\evidence.js` exercises readiness, capture and recording recovery.
+Portable parity checks do not replace real guest tests. Windows Sandbox remains a single fresh guest,
+not a multi-instance dev VM service.
+
+## Historical spike and original proposal (2026-11-06)
+
+**The remainder is preserved as design history, not current API or setup guidance.** Proposed tool names,
+HTTP, System bootstrap and `.wsb` fallback below were superseded by the implementation above.
 
 Goal: an MCP server that lets an agent spin up a disposable Windows Sandbox, mount a project,
 run commands with real stdout/exit codes, and throw it away — "devvm for Windows".
@@ -62,7 +100,7 @@ Agent ──MCP(stdio)──► sandbox-mcp (host)
   env vars + guest firewall rules — v2.
 - Guest firewall: spike disabled it entirely; v1 should open just the agent port.
 
-## Status (v1 work, 2026-11-06)
+## Historical status (early v1 work, 2026-11-06; superseded)
 
 Steps 1-3 and 5 below are done and shipped as the MCP server + `sbx` CLI (see README.md). What changed from this plan:
 
@@ -72,8 +110,8 @@ Steps 1-3 and 5 below are done and shipped as the MCP server + `sbx` CLI (see RE
   crash detection, reports.
 - No `sandbox_install` / toolchain caching yet (step 4).
 
-Roadmap: installer change tracking (files/registry/services before vs after), detonation mode for untrusted files,
-recorded runs/video, toolchain cache.
+The early roadmap below is historical: installer change tracking, detonation and recorded runs/video are now
+implemented. General developer-toolchain bootstrap is not an implemented API.
 
 ## Next steps (original)
 

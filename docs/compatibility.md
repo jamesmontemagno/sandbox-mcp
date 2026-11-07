@@ -42,7 +42,8 @@ These are measured versions, not an exact-SDK requirement for using sandbox-mcp.
 
 ## Reproduce
 
-Use the [source samples and build commands](https://github.com/shanselman/sandbox-mcp/tree/main/samples). Invoke `Wpf.exe`, `WinForms.exe` and
+Use the [source samples and build commands](../samples/README.md) from this matching feature-preview checkout
+(the unpublished samples are not implied to exist on public `main`). Invoke `Wpf.exe`, `WinForms.exe` and
 `HelloWinUI.exe` explicitly: self-contained .NET folders can contain `createdump.exe`, so a bare folder is
 deliberately ambiguous. The entire folder is still copied when an EXE is selected.
 
@@ -92,3 +93,33 @@ This fixture defect is not evidence that WinUI itself is unsupported.
   driver compatibility is established here. Such requirements need their own real guest proof.
 - The default clean guest exposes missing dependencies. Provisioning is an explicit opt-in, not something a
   passing self-contained result implies was installed behind the scenes.
+
+## Combined feature verification
+
+The integration lane reran the combined runtime source at
+`39da7ecd86599fc1c14d844c464068003bd0138e` on 2026-11-07 UTC, rather than treating component proofs as
+integration acceptance. Subsequent onboarding/skill/screenshot edits do not change `src` or `agent` bytes;
+the final feature-preview ZIP is separately parity-checked and exercised after extraction with no host Node
+on PATH. Its filename and handoff identify the final documentation commit, not a new public version.
+
+| Combined check | Observed result |
+|---|---|
+| `node test\integration.js off`, `on`, `firewall` | PASS: real CLI + MCP stdio share one guest, concurrent encrypted exec/copy/readers, identity/tamper/replay/epoch/version rejection, UIA/greeting/PNG, six-frame recording, desktop-turn transfer, incremental deploy/no-change/mutation/delete/restart, owned teardown. |
+| `node test\evidence.js` | PASS: on/off interactive readiness, explicit older capture, out-of-bounds/moved-window rejection, normal HTML/MP4 with ffmpeg decode, forced recorder interruption, and an 18-frame one-shot report. |
+| Native `/MD` clean versus explicit auto provisioning | Clean FAIL naming missing VC++ (exit -1073741515, 29.8 s); explicit Microsoft-signed VC++ provisioning PASS (exit 0, 30.9 s). |
+| Existing offline guest, explicit Windows App Runtime 1.8 | PASS: registered 8000.921.1539.0; persistent non-clean provenance retains VC++ and WAR installation records. |
+| WinUI EXE, offline CLI + test + recording | PASS, 47.291 s; three screenshots, test exit 0, live window, no matching crashes. [Fresh screenshot](../docs/integration-winui.png). |
+| WinUI MSIX, offline MCP `sandbox_run` + test + recording | PASS, 48.907 s; actual PID 1932, AUMID `SandboxShowcase.WinUI_nf4dxqg4mb6dm!App`, three screenshots, no matching crashes, 51-frame complete HTML/MP4. [Fresh screenshot](../docs/integration-winui-msix.png). |
+| Self-contained WPF, offline CLI + test | PASS, 46.241 s; modern app-local assemblies do not shadow the inbox UIA compiler references. [Fresh screenshot](../docs/integration-wpf.png). |
+
+Integration raw artifacts are under the lane-specific `work\integration-final\runs` in the verification
+checkout (not a universal install path): recording one-shot `20261107-015719`, native clean `015755`,
+native provisioned/WAR `015826`, WinUI EXE `015927`, WinUI MSIX `020023`, WPF `020118`.
+Each GUI run's `out\report.json` includes test output, screenshots and timings; recording reports link
+`out\recordings\<recordingId>\recording.html`, MP4 and raw manifest. See the final handoff for ZIP hash
+and extracted-package run paths.
+
+The 95 host/guest unit tests include same-provider-ID/different-epoch cleanup, two-writer state/provenance/
+recording updates, retained publication recovery, rejected zero-frame start recovery, bounded manifest reads
+and screenshot path-escape tripwires. **Actual UAC/lock transitions were not induced**; mocked native desktop
+identity/bounds denial regressions cover the fail-closed guard. No blanket “all Windows apps work” claim is made.

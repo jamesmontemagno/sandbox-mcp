@@ -5,6 +5,10 @@ description: Test a Windows desktop or console app, or its installer, on a fresh
 
 # Testing apps in Windows Sandbox
 
+This revision documents an unreleased feature preview; the public v1.1.0 ZIP does not contain every tool below.
+Use the matching feature-preview ZIP or source commit. Follow the README's edition/virtualization, administrator
+feature-enable, restart and first-launch instructions, then run `sbx doctor` before any guest work.
+
 Windows Sandbox is a clean Windows 11 VM that boots in ~15-20 s and is **destroyed on stop**. Only **one** can run at a
 time. Nothing from the host is installed in it: no dev tools, no Store apps (no Notepad, Calculator, Terminal),
 no winget. It has Windows PowerShell 5.1 and .NET Framework 4.8. Treat it like a brand-new customer PC.
@@ -57,6 +61,8 @@ For a guest already started with the step tools, use `sandbox_provision` / `sbx 
      Stop publishes a self-contained HTML flipbook, plus MP4 if host ffmpeg is already available.
      Partial frames survive crashes. One-shot `sandbox_run` accepts `record: true` (`sbx run --record`);
      its report links the evidence. No extra software is installed in the guest.
+     Reservations are shared across clients and bound to the boot epoch/recording ID. Publication failures keep
+     recovery metadata for retry; confirmed inactive zero-frame starts are released with an explicit error.
 5. `sandbox_app_errors` (since `launchedAt`) to catch crashes and .NET unhandled exceptions.
 6. `sandbox_copy_out` logs, output files, crash dumps.
 7. `sandbox_stop`. Everything inside is gone; artifacts stay on the host in the run's `out` folder.
@@ -86,7 +92,8 @@ For a guest already started with the step tools, use `sandbox_provision` / `sbx 
 
 - If a tool says "Windows Sandbox isn't ready on this PC", pass its fix list on to the user (it usually needs an
   admin command and a restart); don't try to work around it. `sbx doctor` re-checks.
-- One sandbox at a time: if `sandbox_start` says one is running, stop it (or ask the user if it isn't ours).
+- One sandbox at a time: if `sandbox_start` says one is running, stop only a guest you own;
+  otherwise ask its owner or the user rather than interrupting it.
 - Boot is fresh every time. Diagnose missing prerequisites first; do not install them without explicit user opt-in.
   A missing prerequisite is often exactly the bug being hunted.
 - `sandbox_exec` runs Windows PowerShell 5.1 as an admin user in the interactive session. Use `shell: "cmd"` for
@@ -95,4 +102,5 @@ For a guest already started with the step tools, use `sandbox_provision` / `sbx 
   `$env:SBX_OUT` and the `Invoke-SbxUi`, `Wait-SbxUi`, `Get-SbxUiTree` commands already imported. Throw or exit
   non-zero to fail.
 - WinForms, WPF, Win32 and WinUI controls all show up in the UI tree (native UI Automation is used).
-- The sandbox shuts itself down after 30 idle minutes, and when the MCP client disconnects.
+- The sandbox shuts itself down after 30 idle minutes. MCP disconnect cleanup stops only the boot started
+  by that client, unless `SANDBOX_MCP_KEEP_ON_EXIT=1`; joining a CLI-started guest does not transfer ownership.

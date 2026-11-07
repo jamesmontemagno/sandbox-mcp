@@ -3,6 +3,23 @@
 A release is a tag plus a Windows x64 portable ZIP (bundled Node, `sbx`, the MCP server, guest agent and skills).
 GitHub Actions builds and attaches the ZIP; nothing is uploaded by hand.
 
+## Local feature previews are not releases
+
+The currently published baseline is v1.1.0. This revision's additional tools are unreleased. For a local
+handoff, keep the package version unchanged, commit the intended source/docs/screenshots, build with
+`npm run package:win`, then copy the ZIP to `sandbox-mcp-feature-preview-<short-commit>-win-x64.zip`.
+Record the full commit and ZIP SHA256 alongside real run/report paths. Do not tag, push, create a release,
+or imply that `/releases/latest` contains the preview.
+
+Run `node test\package-smoke.js <zip>` to compare shipped source/agent/skill bytes and CLI/MCP surfaces.
+Extract that exact ZIP and run `test\integration.js` with its bundled `node.exe`, a fresh isolated
+`SANDBOX_MCP_HOME`, `SANDBOX_MCP_TEST_ROOT`, `SANDBOX_MCP_TEST_SHA` and
+`SANDBOX_MCP_EXPECT_NO_HOST_NODE=1`. Keep Windows system directories and the WindowsApps `wsb.exe` alias on
+PATH but remove host Node. Verify owned-guest teardown. Hosted CI cannot provide this real desktop proof.
+The compatibility screenshots and observations must describe tested builds, not unmeasured framework promises.
+
+## Publishing a separately authorized release
+
 1. **Bump the version:** `npm version X.Y.Z --no-git-tag-version` (updates `package.json` and the lockfile). Commit,
    push to `main` and wait for `ci` to go green.
 2. **Dry run:** `gh workflow run release.yml`, then `gh run watch`. It runs the tests, builds the ZIP, smoke-tests it and

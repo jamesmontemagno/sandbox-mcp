@@ -34,6 +34,8 @@ Each UI test invokes **Greet** through UI Automation and waits for the greeting 
 typing and a file write. A test failure returns a nonzero exit code and the run's `report.md` / `report.json`
 contain screenshots and diagnostics.
 
-Self-contained is intentional: a clean guest has no modern .NET or Windows App SDK runtime. Shipping the
-runtime with an app is different from installing it in the guest. The [compatibility matrix](../docs/compatibility.md)
+Self-contained is intentional: do not assume that a clean guest has a compatible modern .NET or Windows App SDK
+application runtime. Observed inbox/CBS Windows App Runtime packages are not proof that an app's requested runtime
+is present. Shipping an app-local self-contained payload is different from explicitly installing a runtime in
+the guest. The [compatibility matrix](../docs/compatibility.md)
 records exactly which builds were exercised; these samples are not a guarantee that every Windows app works.

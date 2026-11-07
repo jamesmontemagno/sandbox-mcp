@@ -3,7 +3,14 @@
 **Fresh, throwaway Windows machines for testing your apps.** One command (or one MCP tool call) boots a clean
 Windows 11 in [Windows Sandbox](https://learn.microsoft.com/windows/security/application-security/application-isolation/windows-sandbox/),
 copies your build in, runs it, drives its UI, screenshots it, checks for crashes, copies the results out and
-deletes the machine. About 35 seconds, start to finish.
+deletes the machine. The measured GUI samples take roughly 40-50 seconds, start to finish.
+
+> **Development feature preview, not a published release.** The current public
+> [v1.1.0 download](https://github.com/shanselman/sandbox-mcp/releases/tag/v1.1.0) provides the portable baseline
+> and `doctor`. This working tree adds verified incremental deploy, coordinated CLI/MCP access, boot-bound
+> encrypted transport, dependency diagnosis/opt-in provisioning, packaged activation and bounded recording.
+> Use a ZIP explicitly named `sandbox-mcp-feature-preview-<commit>-win-x64.zip`, or this revision's source,
+> for those additions. Its package version remains 1.1.0; the commit identifies the unreleased build.
 
 ```text
 > sbx run .\samples\HelloSandbox\bin --test .\samples\HelloSandbox\test.ps1
@@ -30,7 +37,17 @@ PASS  HelloSandbox.exe on a fresh Windows Sandbox (37.4s)
 The test script typed a name into the app with UI Automation, clicked **Greet** and waited for the answer. This is the
 screenshot it brought back from inside the sandbox:
 
-![HelloSandbox in a fresh Windows Sandbox after its test](docs/hello-after-test.png)
+![HelloSandbox in a fresh offline Windows Sandbox after its UIA test](docs/compatibility/hello.png)
+
+The same flow runs WinUI, WPF and native Win32 apps, including dev-signed MSIX packages:
+
+| WinUI 3, packaged | WPF, self-contained | Native Win32, packaged |
+|---|---|---|
+| ![WinUI greeting and counter after final integrated MCP test](docs/integration-winui-msix.png) | ![WPF greeting after final integrated UIA test](docs/integration-wpf.png) | ![Native Win32 greeting after UIA](docs/compatibility/native-msix.png) |
+
+These are real offline-guest screenshots, not host mockups. WinUI/WPF were refreshed against the final integrated
+source; the full matrix covers seven configurations. Exact builds, timings, startup defects
+found and remaining coverage gaps are in the [compatibility evidence](docs/compatibility.md).
 
 It's both:
 
@@ -47,14 +64,14 @@ executable or package, not a particular UI framework. Bring an app that can run 
 Win32, WinForms, WPF, WinUI, console, PyInstaller or Electron builds use the same clean-machine workflow.
 Installers and untrusted files have their own audit/detonation workflows. This is not a promise that every
 Windows app or hardware-dependent workload works in Sandbox. See the [measured compatibility matrix](docs/compatibility.md)
-and [small source samples](https://github.com/shanselman/sandbox-mcp/tree/main/samples) for the configurations actually exercised.
+and [small source samples](samples/README.md) in this matching checkout for the configurations actually exercised.
 
 [winapp CLI's Sandbox execution](https://github.com/microsoft/winappCli/blob/5f379fb55517b7a47f9aad11885a7c1676dcca2e/docs/sandbox-execution.md)
 also supports packaged and unpackaged apps: its `--on sandbox` offers a warm, identity-aware developer loop,
 runtime preparation and WinUI diagnostics. sandbox-mcp emphasizes **fresh-by-default clean-machine reports**,
 network-off shared-folder mailbox transport, installer/uninstaller diffs and detonation. The tools have
-overlapping app support but different defaults and goals; no SDK or runtime is preinstalled in our guest
-unless explicitly requested.
+overlapping app support but different defaults and goals; sandbox-mcp never implicitly installs app prerequisites.
+Inbox Framework/CBS components can exist, but are not proof that an app's requested runtime is available.
 
 "It works on my machine" is usually true: your machine has every runtime, SDK, redistributable, font, registry key
 and PATH entry you ever installed. Your users' machines don't. Windows Sandbox is a pristine Windows that boots in
@@ -134,7 +151,8 @@ and extract it. The ZIP includes `sbx`, the MCP server, their dependencies, the 
 Node.js runtime. You do not need to clone the repo, install Node/npm, or add anything to PATH.
 The package is built and tested on native Windows x64; ARM64 is not currently packaged.
 
-Newly published releases include this ZIP; older releases without a Windows download contain only source archives.
+The public v1.1.0 ZIP is the baseline, not this unreleased feature preview. The portable setup below works for
+either; use the feature-preview ZIP or this source revision for the new tools described on this page.
 
 Open PowerShell in the extracted folder and start with the read-only readiness check:
 
@@ -160,6 +178,12 @@ the `wsb` command-line tool that `sbx` uses. Run the check again and try a built
 .\sbx.cmd run C:\Windows\System32\charmap.exe --open
 ```
 
+A passing run leaves `report.md`, `report.json`, screenshots and `audit.jsonl` under
+`%LOCALAPPDATA%\sandbox-mcp\runs\<timestamp>` (`out` contains the report and media), even after teardown.
+`--open` opens the report. Preview builds also support `--record`, with a self-contained viewer under
+`out\recordings\<recordingId>\recording.html` and MP4 when host ffmpeg is available. `SANDBOX_MCP_HOME`
+changes the artifact root. No ffmpeg or app runtime is silently installed.
+
 For an MCP client, configure its stdio server with the full paths to the bundled runtime and server. Replace the
 example folder with the location where you extracted the ZIP:
 
@@ -175,8 +199,25 @@ example folder with the location where you extracted the ZIP:
 }
 ```
 
-Claude Desktop and some other clients use `"mcpServers"` instead of `"servers"`. The server writes startup logs to
-stderr; its stdout is reserved for MCP messages.
+That is the VS Code `.vscode\mcp.json` shape. For GitHub Copilot CLI's
+`%USERPROFILE%\.copilot\mcp-config.json`, use:
+
+```json
+{
+  "mcpServers": {
+    "windows-sandbox": {
+      "type": "local",
+      "command": "C:\\Users\\you\\Downloads\\sandbox-mcp\\node.exe",
+      "args": ["C:\\Users\\you\\Downloads\\sandbox-mcp\\src\\server.js"],
+      "tools": ["*"]
+    }
+  }
+}
+```
+
+For Claude Desktop, use `"mcpServers"` with the same command/args and omit `type` and `tools`.
+Restart or reload the client's server configuration, then ask it to run Character Map in a fresh offline Sandbox
+and return the report and screenshot. The server writes logs to stderr; stdout is reserved for MCP messages.
 
 ## Turn on Windows Sandbox
 
@@ -186,7 +227,8 @@ is a whole, real Windows desktop that:
 
 - **comes with Windows:** nothing to download, no VHD, no license key. It's built from the Windows you're running.
 - **is brand new every time:** it boots as clean as the day Windows was installed, in about 15 seconds.
-- **is thrown away when you close it:** every file, registry key and installed app is deleted. Nothing leaks back.
+- **is thrown away when you close it:** guest files, registry keys and installed apps are deleted.
+  Explicitly shared output folders remain on the host as test evidence.
 - **is properly isolated:** it runs on its own kernel behind the Microsoft hypervisor (the same hardware
   virtualization as Hyper-V), not just a separate user account.
 - **is light:** it shares memory and files with your PC where it safely can, and uses your GPU.
@@ -227,10 +269,14 @@ if it can't reach Windows Sandbox. The full list of what you need:
 
 ## Install from source
 
+The clone command below retrieves the public default branch, not this unpublished preview. For preview-only
+features and the new WinUI/WPF samples, use the source checkout matching the feature-preview commit supplied
+with your handoff. Samples are not included in the portable ZIP.
+
 ```powershell
 git clone https://github.com/shanselman/sandbox-mcp
 cd sandbox-mcp
-npm install
+npm ci --omit=dev
 npm link            # puts `sbx` and `sandbox-mcp` on your PATH (or use `node src/cli.js`)
 
 sbx doctor                                         # is Windows Sandbox ready? (see above)
@@ -249,8 +295,8 @@ sbx detonate .\samples\Suspicious\suspicious.ps1                             # a
 
 ### Use it from an agent (MCP)
 
-Add the server to your MCP client. For example VS Code (`.vscode/mcp.json`) or GitHub Copilot CLI
-(`~/.copilot/mcp-config.json`):
+For source installs, use the same client-specific shapes above, replacing the bundled command with your
+installed Node executable. For example, VS Code (`.vscode\mcp.json`):
 
 ```json
 {
@@ -264,8 +310,8 @@ Add the server to your MCP client. For example VS Code (`.vscode/mcp.json`) or G
 }
 ```
 
-(Claude Desktop and others use `"mcpServers"` instead of `"servers"`. After `npm link` you can use
-`"command": "sandbox-mcp"` with no args.)
+Use the Copilot CLI or Claude shape above for those clients; their top-level keys differ from VS Code.
+An absolute Node path avoids differences between your terminal PATH and the MCP client's environment.
 
 Then ask: *"Build the app, run it in a fresh Windows Sandbox, type my name in the box, click Greet and show me a
 screenshot."*
@@ -282,7 +328,7 @@ installed implicitly):
 sbx start --network off
 powershell -File .\samples\HelloSandbox\build.ps1
 sbx deploy .\samples\HelloSandbox\bin C:\apps\HelloSandbox --launch HelloSandbox.exe --restart
-sbx shot --window HelloSandbox
+sbx shot --window "Hello Sandbox"
 # Edit, build, deploy --restart, screenshot again; when done:
 sbx stop
 ```
@@ -304,6 +350,8 @@ incremental deployment never adopts an unrelated sandbox.
 
 | Tool | What it does |
 |---|---|
+| `sandbox_deps` | Host-only conservative dependency diagnosis; does not execute or install the app. |
+| `sandbox_provision` | Explicit opt-in verified runtime installation into the current owned guest; persists non-clean provenance. |
 | `sandbox_run` | The whole loop in one call: boot, copy/install, launch or run, observe, test script, collect, destroy, report. |
 | `sandbox_start` | Boot a fresh sandbox (`network`: on / firewall / off, `memoryMB`, `vGpu`). Waits for the agent and an interactive desktop; reports readiness timings. |
 | `sandbox_status` | Is one running, its id/IP/network mode, agent health and current interactive-desktop facts. |
@@ -333,12 +381,15 @@ incremental deployment never adopts an unrelated sandbox.
 ```text
 sbx run <app.exe|folder|app.msix> [--exe <name>] [--args "<args>"] [--console] [--wait <sec>]
                          [--cert <file.cer>] [--deps <folder>] [--app-id <id>]
+                         [--record] [--provision <auto|list>]
                          [--test <script.ps1>] [--collect <sandbox path>]... [--keep] [--open]
 sbx install-test <setup.msi|.exe|.ps1|.cmd> [--args "/S"] [--uninstall auto|none|"<cmd>"]
                          [--uninstall-args "/S"] [--test <script.ps1>] [--fail-on-leftovers] [--exclude <path>]...
 sbx detonate <file> [--args "<args>"] [--network off|firewall|on] [--duration <sec>] [--full] [--every <sec>]
 
 sbx start [--network on|firewall|off] [--memory <MB>] [--no-gpu] [--minimized]
+sbx deps <host app path>                   sbx provision <host app path> --provision <auto|list>
+sbx desktop-release
 sbx push <host path> [sandbox path]          sbx pull <sandbox path> [name]
 sbx deploy <hostDir> [guestDir] [--launch <exe>] [--args "..."] [--restart]
 sbx exec [--cmd] [--cwd <dir>] <command...>  sbx launch <exe|PackageFamilyName!AppId> [--args "..."]
@@ -351,6 +402,9 @@ sbx click <x> <y>   sbx type "text" [--keys] sbx errors   sbx status   sbx stop
 sbx doctor                                   # can this PC run Windows Sandbox? how to fix it if not
 sbx mcp                                      # run the MCP server
 ```
+
+`exec` treats the command and everything after it as raw guest input. Put CLI options first:
+`sbx exec --json --timeout 30 'Get-Date'`, not `sbx exec 'Get-Date' --json`.
 
 Add `--json` to any command for machine-readable output. `sbx exec` and `sbx run` exit with meaningful codes, so they
 drop straight into scripts. `sbx help` has the details.
@@ -425,7 +479,7 @@ move, resize, minimize or close must be captured again before clicking.
 
 ## Test scripts
 
-`sbx run --test smoke.ps1` (or `sandbox_run` with `testScript`) runs your script **inside** the sandbox after the app
+`sbx run --test smoke.ps1` (or `sandbox_run` with `test`) runs your script **inside** the sandbox after the app
 starts, with:
 
 - `$env:SBX_APP_PID`, `$env:SBX_APP_DIR`, `$env:SBX_OUT` (anything you write to `SBX_OUT` comes back to the host),
@@ -570,8 +624,9 @@ minutes (a 2 MB MSI took 125 s to install instead of 1 s).
   NAT address; in `off` mode it's the shared folder.
 - `SANDBOX_MCP_ALLOWED_ROOTS` limits which host folders can be copied in (handy when an agent is driving).
 - Every operation is appended to `audit.jsonl` in the run folder.
-- When the MCP client disconnects, the sandbox is destroyed. An idle watchdog inside the guest shuts it down after
-  30 minutes with no calls.
+- When the MCP client disconnects, only the boot it started is destroyed, unless `SANDBOX_MCP_KEEP_ON_EXIT=1`.
+  A client joining a CLI-started guest does not own it. An idle watchdog shuts the guest down after 30 minutes
+  with no calls.
 - With `network: on` the guest has internet access like any other machine on your network's NAT. Use `off` for
   anything you don't trust.
 - The `out` folder is writable from inside the sandbox, so treat what comes back (screenshots, pulled files, logs)
@@ -590,7 +645,7 @@ minutes (a 2 MB MSI took 125 s to install instead of 1 s).
 
 ## How it works
 
-Windows Sandbox has no COM or WMI API. Since Windows 11 24H2 its Store version ships `wsb.exe`
+Since Windows 11 24H2 the Store version of Windows Sandbox ships the supported `wsb.exe` CLI
 (`start / stop / list / ip / exec / share / connect`), but `wsb exec` returns only an exit code: no output, no
 screenshots, no UI. So:
 
@@ -609,7 +664,8 @@ screenshots, no UI. So:
 ## Limits
 
 - **One sandbox at a time.** That's a Windows Sandbox rule. `sbx run` calls queue nothing; they fail fast if one is running.
-- Every boot is pristine, so prerequisites get installed every time (that's the point, but it costs time).
+- Every boot is pristine. Bundle app-local prerequisites or explicitly opt in to provisioning for each fresh guest;
+  automatic runtime installation is never the default.
 - No Microsoft Store apps, winget, Notepad, Calculator or Windows Terminal inside. Windows PowerShell 5.1 and
   .NET Framework 4.8 are there.
 - The first UI Automation call in a sandbox takes ~4 s (it generates the interop); later calls are fast.
