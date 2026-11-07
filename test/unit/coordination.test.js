@@ -110,3 +110,26 @@ test('disconnect cleanup cannot stop or clear a same-ID replacement boot', (t) =
   });
   assert.deepEqual(readJson(file), replacement);
 });
+
+test('pinned copy and exec reject a replacement epoch without staging or sending', (t) => {
+  const home = temp(t);
+  const file = path.join(home, 'current.json');
+  const replacement = { id: 'same-provider-id', epoch: 'new-boot', runDir: home, protocolSeq: 20, seq: 10 };
+  atomicJson(file, replacement);
+  fs.mkdirSync(path.join(home, 'agent'));
+  fs.writeFileSync(path.join(home, 'agent', 'token.txt'), 'a'.repeat(64));
+  const source = path.join(home, 'source.txt');
+  fs.writeFileSync(source, 'test');
+  const code = `
+    import assert from 'node:assert/strict';
+    import { copyIn, exec } from ${JSON.stringify(new URL('../../src/core.js', import.meta.url).href)};
+    const target={id:'same-provider-id',epoch:'old-boot',runDir:${JSON.stringify(home)},identity:{protocolVersion:2}};
+    await assert.rejects(copyIn(${JSON.stringify(source)}, 'C:\\\\apps\\\\stale.txt', target), /restarted\\/replaced/);
+    await assert.rejects(exec({command:"'must-not-execute'"}, target), /restarted\\/replaced/);
+  `;
+  execFileSync(process.execPath, ['--input-type=module', '-e', code], {
+    env: { ...process.env, SANDBOX_MCP_HOME: home },
+  });
+  assert.deepEqual(readJson(file), replacement);
+  assert.equal(fs.existsSync(path.join(home, 'in')), false);
+});
