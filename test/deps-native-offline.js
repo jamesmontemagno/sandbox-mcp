@@ -7,10 +7,13 @@ import * as sbx from '../src/core.js';
 
 const app = process.argv[2];
 if (!app) throw new Error('Usage: node test\\deps-native-offline.js <VC++ /MD console exe>');
+assert.ok(process.env.SANDBOX_MCP_HOME, 'Set an isolated SANDBOX_MCP_HOME before running live dependency tests.');
 
 const clean = await runApp({ app, console: true, network: 'off', timeoutSec: 20 });
 console.log(summary(clean));
 assert.equal(clean.pass, false);
+assert.ok(!clean.stopError, clean.stopError);
+assert.deepEqual(await sbx.listSandboxes(), []);
 assert.deepEqual(clean.provisioned, []);
 assert.ok(clean.dependencyFindings.some((f) => f.component === 'VC++ redistributable'));
 
@@ -34,5 +37,9 @@ try {
   assert.equal(status.provisioning.cleanMachine, false);
   assert.ok(status.provisioning.provisioned.some((p) => p.component === 'Windows App Runtime'));
 } finally {
-  if (provisioned.kept) await sbx.stopSandbox();
+  if (provisioned.kept) {
+    const stopped = await sbx.stopSandbox({ target: provisioned.sandbox });
+    assert.ok(!stopped.recordingError, stopped.recordingError);
+    assert.deepEqual(await sbx.listSandboxes(), []);
+  }
 }
