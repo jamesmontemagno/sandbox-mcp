@@ -14,9 +14,12 @@ const HELP = `sbx ${sbx.VERSION} - fresh, throwaway Windows machines for testing
 Usage: sbx <command> [options]
 
 One shot
-  run <app.exe|folder> [options]     Boot a fresh sandbox, copy the app in, run it, screenshot it, check
+  run <app.exe|folder|app.msix> [options] Boot a fresh sandbox, copy the app in, run it, screenshot it, check
                                      for crashes, write a report, destroy the sandbox. Exit 0 = pass.
       --exe <name>                   Which exe, when <folder> has several
+      --cert <file.cer>              Trust a dev-signing certificate inside this guest only
+      --deps <folder>                MSIX/Appx dependency packages (default: adjacent deps folder)
+      --app-id <id>                  Application Id for packages with multiple applications
       --args "<args>"                Arguments for the app
       --console                      Console app: run to completion and capture output
       --provision <auto|list>         OPT IN: install verified runtimes; report is NOT a clean-machine pass
@@ -60,7 +63,7 @@ Step by step
   pull <sandbox path> [name]         Copy a file/folder out to the run's out\\files folder
   exec [--cmd] [--cwd <dir>] [--timeout <sec>] <command...>
                                      Run a command; prints its output and exits with its exit code
-  launch <exe> [--args "<args>"] [--cwd <dir>] [--wait <sec>]
+  launch <exe|PackageFamilyName!AppId> [--args "<args>"] [--cwd <dir>] [--wait <sec>]
                                      Start a GUI app without waiting for it
   proc <pid>                         Is it still running? exit code? window title?
   windows                            List windows on the sandbox desktop
@@ -97,7 +100,7 @@ Data: ${sbx.HOME}`;
 
 // Options that take a value; everything else starting with -- is a boolean flag.
 const VALUE_OPTS = new Set(['network', 'memory', 'exe', 'args', 'wait', 'test', 'collect', 'cwd', 'timeout', 'window', 'pid', 'name', 'since',
-  'id', 'type', 'index', 'value', 'depth', 'max', 'uninstall', 'uninstall-args', 'exclude', 'duration', 'every', 'launch', 'provision']);
+  'id', 'type', 'index', 'value', 'depth', 'max', 'uninstall', 'uninstall-args', 'exclude', 'duration', 'every', 'launch', 'provision', 'cert', 'deps', 'app-id']);
 const REPEAT_OPTS = new Set(['collect', 'exclude']);
 
 function parse(argv) {
@@ -346,6 +349,7 @@ async function main(argv) {
       need(1, 'run <app.exe|folder> [--exe <name>] [--args "..."] [--console] [--test <script.ps1>] [--collect <path>]... [--keep]');
       const r = await runApp({
         app: pos[0], exe: opt.exe, args: opt.args, console: !!opt.console, waitSec: num(opt.wait, '--wait'), provision: opt.provision,
+        cert: opt.cert, deps: opt.deps, appId: opt['app-id'],
         test: opt.test, collect: opt.collect, keep: !!opt.keep, timeoutSec: num(opt.timeout, '--timeout'), ...startOpts(opt),
       });
       if (opt.json) console.log(JSON.stringify({ ...r, shots: r.shots.map(({ previewBase64, ...s }) => s) }, null, 2));

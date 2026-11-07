@@ -352,6 +352,32 @@ HMAC-SHA256 authentication with counters, random IVs and timestamp/replay checks
 stays in the read-only agent share, never in `current.json`, command-line arguments or request/response messages.
 This protects the transport, not against an administrator inside the guest: code there can read its agent share.
 
+## Packaged apps (MSIX and Appx)
+
+`sbx run` also accepts `.msix`, `.msixbundle`, `.appx` and `.appxbundle`. It copies the package into a
+**fresh** guest, installs it with `Add-AppxPackage`, resolves its manifest Application Id, and activates the
+installed AUMID. Screenshots, UI Automation, crash checks, test scripts and reports use the actual app process,
+not the short-lived shell launcher.
+
+```powershell
+sbx run .\build\MyApp.msix --cert .\build\devcert.cer --network off --test .\smoke.ps1
+sbx run .\build\MyApp.msixbundle --deps .\build\Dependencies\x64 --app-id App --network off
+# Inside an already-running sbx session, activate an installed package:
+sbx launch 'MyApp_0123456789abc!App'
+```
+
+`--cert` explicitly trusts a public `.cer` in **the guest's** `LocalMachine\TrustedPeople` store; it never
+installs a certificate on the host. Store-signed/trusted packages do not need it. Provide offline framework
+packages in an adjacent `deps` folder, or choose another folder with `--deps`; every package in that folder is
+passed as a `DependencyPath`. Nothing is downloaded or preinstalled automatically. Select `--app-id` when
+a manifest contains more than one application. Deployment failures include Windows' error and activity log
+when available. Package activation is GUI mode, not `--console`.
+
+The equivalent `sandbox_run` inputs are `app`, `cert`, `deps` and `appId`. `sandbox_launch` accepts `aumid`
+instead of `path`, and the CLI also recognizes `shell:AppsFolder\PackageFamilyName!ApplicationId`.
+Tests receive `$env:SBX_APP_AUMID` as well as the usual process/executable paths. Installed package directories
+are read-only: write test output to `$env:SBX_OUT` or an app-data directory, not `$env:SBX_APP_DIR`.
+
 ## Test scripts
 
 `sbx run --test smoke.ps1` (or `sandbox_run` with `testScript`) runs your script **inside** the sandbox after the app

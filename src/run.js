@@ -5,6 +5,7 @@ import path from 'node:path';
 import * as sbx from './core.js';
 import { scanDependencies, formatDependencies, classifyDependencyFailure, GUEST_DEPENDENCY_INVENTORY } from './deps.js';
 import { prepareProvision, installProvision, recordProvisioning } from './provision.js';
+import { packageInputs, installPackage } from './packaged.js';
 
 const q = (s) => `'${String(s).replace(/'/g, "''")}'`;
 
@@ -26,12 +27,13 @@ export async function shot(args) {
 }
 
 /**
- * app: host path to an .exe (its whole folder is copied, since apps need their DLLs) or to a folder (+ exe).
- * Options: exe, args, waitSec, console, timeoutSec, test (host .ps1), testTimeoutSec, collect[], keep, plus startSandbox options.
+ * app: host .exe (copy its whole folder), folder (+ exe), or MSIX/Appx package/bundle.
+ * Options: exe, cert, deps, appId, args, waitSec, console, timeoutSec, test, testTimeoutSec, collect[], keep, plus startSandbox options.
  */
 export async function runApp(o) {
   const src = path.resolve(o.app);
   if (!fs.existsSync(src)) throw new Error(`Not found: ${src}`);
+  const packaged = fs.statSync(src).isFile() ? packageInputs({ ...o, app: src }) : null;
   let dir = src, exe = o.exe;
   if (fs.statSync(src).isFile()) { dir = path.dirname(src); exe = path.basename(src); }
   else if (!exe) {
@@ -44,8 +46,8 @@ export async function runApp(o) {
   // Windows' own programs (charmap, mspaint, ...) are already in the guest: run them in place instead of copying System32.
   const winDir = path.resolve(process.env.SystemRoot || 'C:\\Windows');
   const builtIn = dir.toLowerCase() === winDir.toLowerCase() || dir.toLowerCase().startsWith(winDir.toLowerCase() + '\\');
-  const appDir = builtIn ? `C:\\Windows${dir.slice(winDir.length)}` : `C:\\apps\\${exe.replace(/\.exe$/i, '')}`;
-  const exePath = `${appDir}\\${exe}`;
+  let appDir = builtIn ? `C:\\Windows${dir.slice(winDir.length)}` : `C:\\apps\\${exe.replace(/\.exe$/i, '')}`;
+  let exePath = `${appDir}\\${exe}`;
   const r = { app: exe, hostDir: dir, args: o.args || '', mode: o.console ? 'console' : 'gui', startedAt: new Date().toISOString(), shots: [], collected: [] };
   if (!builtIn) r.dependencies = scanDependencies(src);
   r.cleanMachine = !o.provision;
@@ -69,7 +71,12 @@ export async function runApp(o) {
       r.provisioned.push(record);
       recordProvisioning(r.runDir, o.provision, r.provisioned);
     }, target);
-    if (builtIn) sbx.log(`${exe} is part of Windows: running the sandbox's own copy`);
+    if (packaged) {
+      sbx.log(`installing ${exe}`);
+      r.package = await installPackage(src, packaged, o.appId);
+      appDir = r.package.installLocation;
+      exePath = path.win32.isAbsolute(r.package.executable) ? r.package.executable : path.win32.join(appDir, r.package.executable);
+    } else if (builtIn) sbx.log(`${exe} is part of Windows: running the sandbox's own copy`);
     else {
       sbx.log(`copying ${dir} to ${appDir}`);
       await sbx.copyIn(dir, appDir);
@@ -81,7 +88,7 @@ export async function runApp(o) {
       r.console = await sbx.exec({ command: `& ${q(exePath)} ${o.args || ''}; exit $LASTEXITCODE`, cwd: appDir, timeoutSec: o.timeoutSec ?? 300 });
       r.process = { hasExited: !r.console.timedOut, exitCode: r.console.exitCode, timedOut: r.console.timedOut };
     } else {
-      r.launch = await sbx.launch({ path: exePath, args: o.args, waitForWindowSec: 30 });
+      r.launch = await sbx.launch({ ...(packaged ? { aumid: r.package.aumid } : { path: exePath }), args: o.args, waitForWindowSec: 30 });
       await sbx.sleep((o.waitSec ?? 5) * 1000);
       r.process = await sbx.processInfo(r.launch.pid);
       if (r.process.hasWindow) r.shots.push(await shot({ pid: r.launch.pid, name: 'app' }));
@@ -92,7 +99,7 @@ export async function runApp(o) {
 
     if (o.test) {
       sbx.log(`running test ${path.basename(o.test)}`);
-      r.test = await runTestScript(o.test, { SBX_APP_PID: r.launch?.pid ?? '', SBX_APP_DIR: appDir, SBX_APP_EXE: exePath }, appDir, o.testTimeoutSec);
+      r.test = await runTestScript(o.test, { SBX_APP_PID: r.launch?.pid ?? '', SBX_APP_DIR: appDir, SBX_APP_EXE: exePath, SBX_APP_AUMID: r.package?.aumid ?? '' }, appDir, o.testTimeoutSec);
       if (r.launch) {
         r.process = await sbx.processInfo(r.launch.pid);
         if (r.process.hasWindow) r.shots.push(await shot({ pid: r.launch.pid, name: 'app-after-test' }));
@@ -115,7 +122,7 @@ export async function runApp(o) {
   }
   r.seconds = (Date.now() - t0) / 1000;
 
-  const stem = exe.replace(/\.exe$/i, '').toLowerCase();
+  const stem = path.win32.basename(r.package?.executable || exe).replace(/\.exe$/i, '').toLowerCase();
   r.crashes = (r.errors || []).filter((e) => (e.message || '').toLowerCase().includes(stem));
   r.failures = runFailures(r);
   r.dependencyFindings = classifyDependencyFailure(r);
@@ -185,8 +192,9 @@ export function renderReport(r) {
     `| Total time | ${r.seconds.toFixed(1)}s |`,
     `| Started | ${r.startedAt} |`,
     `| Baseline | ${r.provisionRequested ? `PROVISIONED (not a clean-machine test), requested: ${r.provisionRequested}` : 'Clean machine; no dependencies installed'} |`,
-    '',
   ];
+  if (r.package) lines.push(`| Package | \`${r.package.packageFullName}\` |`, `| AUMID | \`${r.package.aumid}\` |`, '');
+  else lines.push('');
   if (r.shots.length) {
     lines.push('## Screenshots', '');
     for (const s of r.shots) lines.push(`**${s.name}** (${s.width}x${s.height})`, '', `![${s.name}](${rel(s.path)})`, '');

@@ -134,7 +134,8 @@ server.registerTool('sandbox_launch', {
   title: 'Launch app in sandbox',
   description: 'Start a program (e.g. a GUI app) on the sandbox desktop without waiting for it to exit. Returns its pid.',
   inputSchema: {
-    path: z.string().describe('Executable path inside the sandbox, e.g. C:\\apps\\MyApp\\MyApp.exe'),
+    path: z.string().optional().describe('Executable path inside the sandbox, or PackageFamilyName!ApplicationId.'),
+    aumid: z.string().optional().describe('Installed packaged app AUMID (PackageFamilyName!ApplicationId), instead of path.'),
     args: z.string().optional(),
     cwd: z.string().optional(),
     waitForWindowSec: z.number().min(0).optional().describe('Wait up to N seconds for a main window (default 15).'),
@@ -258,7 +259,10 @@ server.registerTool('sandbox_run', {
     'PowerShell test script inside, copy files out, destroy the sandbox and write report.md. Use this for "does my build work on a ' +
     'clean Windows machine?". Fails if a sandbox is already running.',
   inputSchema: {
-    app: z.string().describe('Host path to the .exe (its whole folder is copied) or to the app folder.'),
+    app: z.string().describe('Host path to an .exe, app folder, .msix, .msixbundle, .appx or .appxbundle.'),
+    cert: z.string().optional().describe('Host .cer to trust in the disposable guest TrustedPeople store only.'),
+    deps: z.string().optional().describe('Host folder of dependency packages. Defaults to a deps folder beside the package.'),
+    appId: z.string().optional().describe('Manifest Application Id; required when the package has multiple applications.'),
     exe: z.string().optional().describe('Exe name when app is a folder with more than one .exe.'),
     args: z.string().optional(),
     console: z.boolean().optional().describe('Console app: run to completion and capture stdout instead of launching a window.'),

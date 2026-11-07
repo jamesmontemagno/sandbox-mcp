@@ -467,8 +467,9 @@ export async function exec({ command, shell, cwd, timeoutSec = 120 }, target) {
   return call('exec', { command, shell, cwd, timeoutSec }, (timeoutSec + 30) * 1000, target);
 }
 
-export async function launch({ path: p, args, cwd, waitForWindowSec = 15 }) {
-  return call('launch', { path: p, args, cwd, waitForWindowSec }, (waitForWindowSec + 30) * 1000);
+export async function launch({ path: p, aumid, args, cwd, waitForWindowSec = 15 }) {
+  const { activationTarget } = await import('./packaged.js');
+  return call('launch', { ...activationTarget({ path: p, aumid }), args, cwd, waitForWindowSec }, (waitForWindowSec + 30) * 1000);
 }
 
 export async function processInfo(pid) { return call('process', { pid }); }

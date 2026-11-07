@@ -65,6 +65,14 @@ For a guest already started with the step tools, use `sandbox_provision` / `sbx 
 - `sandbox_status` includes the boot epoch and verified agent protocol/version/hash. Both TCP and offline
   mailbox traffic are encrypted and authenticated; stale boot/protocol errors mean start a fresh sandbox.
   Never copy the key from the read-only agent share into logs, command lines or tool arguments.
+- For `.msix`, `.msixbundle`, `.appx` or `.appxbundle`, use `sandbox_run` with `app`, optional public `cert`
+  (`.cer`, guest TrustedPeople only), optional `deps` folder (default adjacent `deps`), and `appId` if the
+  manifest has multiple applications. It installs offline dependencies and activates the AUMID, then follows
+  the same screenshot/UIA/report flow. No Store or package download is required or attempted. CLI equivalents:
+  `sbx run app.msix --cert devcert.cer --deps Dependencies\x64 --app-id App --network off`.
+  `sandbox_launch` also accepts `aumid: "PackageFamilyName!AppId"` for an already-installed app;
+  `sbx launch 'PackageFamilyName!AppId'` does the same. Package tests get `$env:SBX_APP_AUMID`.
+  The package's install directory is read-only; write files to `$env:SBX_OUT` or app data.
 
 - If a tool says "Windows Sandbox isn't ready on this PC", pass its fix list on to the user (it usually needs an
   admin command and a restart); don't try to work around it. `sbx doctor` re-checks.

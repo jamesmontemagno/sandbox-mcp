@@ -110,11 +110,19 @@ function Convert-Stderr([string]$s) {
 $script:launched = @{}
 
 function Op-Launch($req) {
-    $a = @{ FilePath = [Environment]::ExpandEnvironmentVariables($req.path); PassThru = $true }
-    if ($req.args) { $a.ArgumentList = $req.args }
-    if ($req.cwd) { $a.WorkingDirectory = $req.cwd } elseif (Split-Path -Parent $a.FilePath) { $a.WorkingDirectory = Split-Path -Parent $a.FilePath }
     $launchedAt = (Get-Date).ToString('o')
-    $p = Start-Process @a
+    if ($req.aumid) {
+        if (-not ('SbxActivation' -as [type])) {
+            Add-Type -Path (Join-Path $PSScriptRoot 'activation.cs')
+        }
+        $appPid = [SbxActivation]::Launch([string]$req.aumid, [string]$req.args)
+        $p = Get-Process -Id $appPid -ErrorAction Stop
+    } else {
+        $a = @{ FilePath = [Environment]::ExpandEnvironmentVariables($req.path); PassThru = $true }
+        if ($req.args) { $a.ArgumentList = $req.args }
+        if ($req.cwd) { $a.WorkingDirectory = $req.cwd } elseif (Split-Path -Parent $a.FilePath) { $a.WorkingDirectory = Split-Path -Parent $a.FilePath }
+        $p = Start-Process @a
+    }
     $null = $p.Handle # keep the handle so ExitCode is available after the process exits
     $script:launched[$p.Id] = $p
     if ($req.waitForWindowSec) {
