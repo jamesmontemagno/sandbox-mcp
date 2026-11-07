@@ -243,6 +243,7 @@ async function call(op, params = {}, timeoutMs = 60_000) {
   const t = Date.now();
   try {
     const mutates = ['launch', 'click', 'keys', 'uiaction'].includes(op) ||
+      (op === 'deploy_apply' && (params.launch || params.restart)) ||
       (op === 'screenshot' && (params.windowTitle || params.pid));
     const invoke = () => agentCall(s, op, params, timeoutMs);
     const r = await (mutates ? desktop.run(invoke) : invoke());
