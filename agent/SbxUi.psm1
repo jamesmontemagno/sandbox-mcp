@@ -30,7 +30,9 @@ public static class SbxTlb {
     $interop = Join-Path $dir 'Interop.UIAutomationClient.dll'
     if (-not (Test-Path $interop)) { [SbxTlb]::Generate($interop) }
     Add-Type -Path $interop # load it first so the compiled code can resolve it by name
-    Add-Type -Path (Join-Path $PSScriptRoot 'uia.cs') -ReferencedAssemblies $interop, System.Core
+    # A self-contained app's working directory can contain modern System.dll facades.
+    $framework = [Runtime.InteropServices.RuntimeEnvironment]::GetRuntimeDirectory()
+    Add-Type -Path (Join-Path $PSScriptRoot 'uia.cs') -ReferencedAssemblies $interop, (Join-Path $framework 'System.dll'), (Join-Path $framework 'System.Core.dll')
 }
 
 # Surface the real error instead of PowerShell's "Exception calling X with N argument(s)" wrapper.

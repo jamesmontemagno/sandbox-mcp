@@ -5,6 +5,7 @@ import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
+import os from 'node:os';
 import { ROOT } from '../../src/core.js';
 
 const ps = (script) => execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], { encoding: 'utf8', timeout: 120_000 });
@@ -27,4 +28,14 @@ test('snap.cs compiles with Windows PowerShell 5.1 (C# 5)', () => {
 test('uia.cs compiles against the UIAutomationCore interop', () => {
   const out = ps(`$m = Import-Module '${agent('SbxUi.psm1')}' -PassThru; & $m { Initialize-SbxUi }; [SbxUia].Name`);
   assert.equal(out.trim().split(/\r?\n/).pop(), 'SbxUia');
+});
+
+test('UIA uses inbox Framework references even when app cwd contains System.dll', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sbx-uia-shadow-'));
+  const quote = (s) => `'${s.replace(/'/g, "''")}'`;
+  try {
+    ps(`Add-Type -TypeDefinition 'public class AppLocalFacade {}' -OutputAssembly ${quote(path.join(dir, 'System.dll'))}`);
+    const out = ps(`Set-Location ${quote(dir)}; Import-Module ${quote(agent('SbxUi.psm1'))}; Initialize-SbxUi; [SbxUia].Name`);
+    assert.equal(out.trim().split(/\r?\n/).pop(), 'SbxUia');
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
