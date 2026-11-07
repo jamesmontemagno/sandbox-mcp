@@ -10,12 +10,13 @@ import { runApp } from '../src/run.js';
 
 const cli = (...args) => JSON.parse(execFileSync(process.execPath, ['src\\cli.js', ...args, '--json'], { encoding: 'utf8' }));
 const hasFfmpeg = !spawnSync('ffmpeg', ['-version'], { windowsHide: true }).error;
+assert.ok(process.env.SANDBOX_MCP_HOME, 'Set an isolated SANDBOX_MCP_HOME before running live evidence tests.');
 
 for (const network of ['on', 'off']) {
-  let owned = false;
+  let owned;
   try {
     const boot = await sbx.startSandbox({ network, window: 'minimized' });
-    owned = true;
+    owned = boot;
     assert.equal(boot.desktop.ready, true);
     console.log(JSON.stringify({ network, desktopReadySeconds: boot.desktopReadySeconds, steps: boot.steps }));
     assert.equal((await sbx.status()).desktop.inputDesktop, 'Default');
@@ -77,7 +78,11 @@ for (const network of ['on', 'off']) {
       console.log(JSON.stringify({ interruptedRecorderEvidence: partial }));
     }
   } finally {
-    if (owned) await sbx.stopSandbox();
+    if (owned) {
+      const stopped = await sbx.stopSandbox({ target: owned });
+      assert.ok(!stopped.recordingError, stopped.recordingError);
+      assert.deepEqual(await sbx.listSandboxes(), []);
+    }
   }
 }
 const run = await runApp({ app: 'C:\\Windows\\System32\\charmap.exe', network: 'off', window: 'minimized', waitSec: 1, record: true });

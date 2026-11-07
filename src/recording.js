@@ -2,6 +2,32 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
+import { atomicJson, readJson, withStateLock } from './coordination.js';
+import { STALE_BOOT } from './protocol.js';
+
+export function reserveRecording(home, target, recording) {
+  return withStateLock(home, () => {
+    const stateFile = path.join(home, 'current.json');
+    const recoveryFile = path.join(home, 'recording.json');
+    const state = readJson(stateFile);
+    if (!state || state.id !== target.id || state.epoch !== target.epoch) throw new Error(STALE_BOOT);
+    if (state.recording || readJson(recoveryFile)) throw new Error('A recording is already tracked. Stop it to publish its evidence first.');
+    atomicJson(recoveryFile, { id: target.id, epoch: target.epoch, recording });
+    state.recording = recording;
+    atomicJson(stateFile, state);
+  });
+}
+
+export function clearRecording(home, target, recordingId) {
+  withStateLock(home, () => {
+    for (const name of ['current.json', 'recording.json']) {
+      const file = path.join(home, name), state = readJson(file);
+      if (state?.id !== target.id || state?.epoch !== target.epoch || state?.recording?.recordingId !== recordingId) continue;
+      if (name === 'recording.json') fs.rmSync(file);
+      else { delete state.recording; atomicJson(file, state); }
+    }
+  });
+}
 
 export function recordingOptions({ fps = 2, maxDurationSec = 120, maxFrames = Math.min(600, fps * maxDurationSec) } = {}) {
   for (const [key, value, max] of [['fps', fps, 5], ['maxDurationSec', maxDurationSec, 300], ['maxFrames', maxFrames, 600]]) {

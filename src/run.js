@@ -54,7 +54,7 @@ export async function runApp(o) {
   r.provisionRequested = o.provision;
   r.provisioned = [];
   const t0 = Date.now();
-  let booted = false;
+  let booted = false, ownedRecording;
   try {
     const prepared = o.provision ? await prepareProvision(r.dependencies || { requirements: [], binaries: [] }, o.provision) : [];
     const boot = await sbx.startSandbox(o);
@@ -71,7 +71,7 @@ export async function runApp(o) {
       r.provisioned.push(record);
       recordProvisioning(r.runDir, o.provision, r.provisioned);
     }, target);
-    if (o.record) await sbx.recordStart();
+    if (o.record) ownedRecording = await sbx.recordStart();
     if (packaged) {
       sbx.log(`installing ${exe}`);
       r.package = await installPackage(src, packaged, o.appId, target);
@@ -114,13 +114,15 @@ export async function runApp(o) {
   } catch (e) {
     r.error = e.message;
   } finally {
-    if (booted && o.record) {
-      try { r.recording = await sbx.recordStop(); } catch (e) { r.recordingError = e.message; }
+    if (ownedRecording) {
+      try { r.recording = await sbx.recordStop({ recordingId: ownedRecording.recordingId, target: r.sandbox }); }
+      catch (e) { r.recordingError = e.message; }
     }
     if (booted && !o.keep) {
       sbx.log('destroying the sandbox');
       const st = await sbx.stopSandbox({ target: r.sandbox }).catch((e) => ({ error: e.message }));
       if (st.error) r.stopError = st.error;
+      if (st.recordingError) r.recordingError = st.recordingError;
     }
     r.kept = booted && !!o.keep;
   }
@@ -131,9 +133,6 @@ export async function runApp(o) {
   r.failures = runFailures(r);
   r.dependencyFindings = classifyDependencyFailure(r);
   for (const finding of r.dependencyFindings) r.failures.push(finding.message);
-  if (r.recordingError) r.failures.push(`recording: ${r.recordingError}`);
-  if (r.recording?.stopped === false) r.failures.push('recorder did not stop; partial evidence retained');
-  if (r.recording?.partial) r.failures.push('recording is partial (see recording warnings)');
   if (r.recording?.warnings.length) sbx.log(`recording: ${r.recording.warnings.join('; ')}`);
   r.pass = r.failures.length === 0;
 
@@ -151,6 +150,9 @@ export function runFailures(r) {
   const failures = [];
   if (r.error) failures.push(r.error);
   if (r.stopError) failures.push(`sandbox teardown failed: ${r.stopError}`);
+  if (r.recordingError) failures.push(`recording: ${r.recordingError}`);
+  if (r.recording?.stopped === false) failures.push('recorder did not stop; partial evidence retained');
+  if (r.recording?.partial) failures.push('recording is partial (see recording warnings)');
   if (r.process?.timedOut) failures.push('timed out');
   else if (r.process?.hasExited && r.process.exitCode !== 0) failures.push(`exited with code ${r.process.exitCode ?? 'unknown'}`);
   if (r.test && r.test.exitCode !== 0) failures.push(`test script ${r.test.timedOut ? 'timed out' : `exited with code ${r.test.exitCode}`}`);

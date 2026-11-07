@@ -4,8 +4,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import vm from 'node:vm';
-import { execFileSync } from 'node:child_process';
-import { recordingOptions, parseFrames, renderFlipbook, publishRecording } from '../../src/recording.js';
+import { execFileSync, spawn } from 'node:child_process';
+import { recordingOptions, parseFrames, renderFlipbook, publishRecording, clearRecording } from '../../src/recording.js';
 import { renderReport } from '../../src/run.js';
 
 const frame = { file: 'frame-000000.png', timestamp: '2026-11-07T01:00:00Z', elapsedMs: 120,
@@ -119,6 +119,13 @@ test('record stop recovers preserved evidence after current() clears a crashed g
     fs.writeFileSync(path.join(dir, 'current.json'), JSON.stringify(state));
     fs.writeFileSync(path.join(dir, 'recording.json'), JSON.stringify(state));
     const coreUrl = new URL('../../src/core.js', import.meta.url).href;
+    fs.unlinkSync(path.join(recordingDir, frame.file));
+    execFileSync(process.execPath, ['--input-type=module', '-e',
+      `import assert from 'node:assert/strict'; import fs from 'node:fs'; import * as sbx from ${JSON.stringify(coreUrl)};
+      await assert.rejects(sbx.recordStop(), /ENOENT/);
+      assert.ok(fs.existsSync(${JSON.stringify(path.join(dir, 'recording.json'))}));`],
+    { env: { ...process.env, SANDBOX_MCP_HOME: dir, PATH: dir }, encoding: 'utf8', windowsHide: true });
+    fs.writeFileSync(path.join(recordingDir, frame.file), Buffer.from('89504e470d0a1a0a', 'hex'));
     const output = execFileSync(process.execPath, ['--input-type=module', '-e',
       `import * as sbx from ${JSON.stringify(coreUrl)}; if(await sbx.current() !== null) throw new Error('guest should be gone'); console.log(JSON.stringify(await sbx.recordStop()));`],
     { env: { ...process.env, SANDBOX_MCP_HOME: dir, PATH: dir }, encoding: 'utf8', windowsHide: true });
@@ -131,6 +138,36 @@ test('record stop recovers preserved evidence after current() clears a crashed g
     assert.ok(!fs.existsSync(path.join(dir, 'current.json')));
     assert.ok(!fs.existsSync(path.join(dir, 'recording.json')));
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('recording reservations are atomic and cleanup preserves counters and replacement epochs', async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sbx-recording-owners-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const target = { id: 'guest', epoch: 'boot', protocolSeq: 40, mailboxSeq: 50 };
+  fs.writeFileSync(path.join(dir, 'current.json'), JSON.stringify(target));
+  const module = new URL('../../src/recording.js', import.meta.url).href;
+  const outcomes = await Promise.all(['one', 'two'].map((recordingId) => new Promise((resolve, reject) => {
+    const code = `import {reserveRecording} from ${JSON.stringify(module)};
+      try { reserveRecording(${JSON.stringify(dir)}, ${JSON.stringify(target)}, {recordingId:${JSON.stringify(recordingId)}});
+      console.log('reserved'); } catch(e) { if(!e.message.includes('already tracked')) throw e; console.log('busy'); }`;
+    const child = spawn(process.execPath, ['--input-type=module', '-e', code]);
+    let stdout = '', stderr = '';
+    child.stdout.on('data', (data) => stdout += data);
+    child.stderr.on('data', (data) => stderr += data);
+    child.on('error', reject);
+    child.on('exit', (code) => code === 0 ? resolve(stdout.trim()) : reject(new Error(stderr)));
+  })));
+  assert.deepEqual(outcomes.sort(), ['busy', 'reserved']);
+  const stateFile = path.join(dir, 'current.json');
+  const state = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
+  const recovery = JSON.parse(fs.readFileSync(path.join(dir, 'recording.json'), 'utf8'));
+  assert.equal(state.recording.recordingId, recovery.recording.recordingId);
+  assert.equal(state.protocolSeq, 40);
+  assert.equal(state.mailboxSeq, 50);
+  const replacement = { ...state, epoch: 'new-boot' };
+  fs.writeFileSync(stateFile, JSON.stringify(replacement));
+  clearRecording(dir, target, state.recording.recordingId);
+  assert.deepEqual(JSON.parse(fs.readFileSync(stateFile, 'utf8')), replacement);
 });
 test('run report links recording artifacts', () => {
   const dir = path.join(os.tmpdir(), 'sbx-report');

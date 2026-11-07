@@ -10,8 +10,8 @@ import { fileURLToPath } from 'node:url';
 import { atomicJson, readJson, withStateLock, retryFile, createDesktop } from './coordination.js';
 import { deployDirectory } from './deploy.js';
 import { PROTOCOL_VERSION, STALE_BOOT, agentHash, createFramer } from './protocol.js';
-import { mapCapturePoint } from './capture.js';
-import { recordingOptions, publishRecording } from './recording.js';
+import { mapCapturePoint, captureFile } from './capture.js';
+import { recordingOptions, publishRecording, reserveRecording, clearRecording } from './recording.js';
 
 export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 export const VERSION = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version;
@@ -503,51 +503,46 @@ export async function windows() { return [].concat((await call('windows')) ?? []
 export async function recordStart(options = {}) {
   const limits = recordingOptions(options);
   const s = await requireSandbox();
-  if (s.recording || readRecording()) throw new Error('A recording is already tracked. Stop it to publish its evidence first.');
   const recordingId = randomBytes(16).toString('hex');
   const directory = path.join(s.runDir, 'out', 'recordings', recordingId);
-  s.recording = { recordingId, directory, ...limits };
-  fs.writeFileSync(`${RECORDING_FILE}.tmp`, JSON.stringify({ id: s.id, recording: s.recording }));
-  fs.renameSync(`${RECORDING_FILE}.tmp`, RECORDING_FILE);
-  writeState(s);
-  const result = await call('recordstart', { recordingId, ...limits }, 30_000);
+  reserveRecording(HOME, s, { recordingId, directory, ...limits });
+  const result = await call('recordstart', { recordingId, ...limits }, 30_000, s);
   return { ...result, directory };
 }
 
-export async function recordStop() {
+export async function recordStop({ recordingId, target } = {}) {
   const state = readState();
   const s = state?.recording ? state : readRecording();
   if (!s?.recording) throw new Error('No tracked recording to stop.');
+  if ((recordingId && s.recording.recordingId !== recordingId) ||
+      (target && (target.id !== s.id || target.epoch !== s.epoch))) throw new Error('Recording ownership changed; refusing to stop another recording.');
   const recording = s.recording;
   const warnings = [];
   let stopped = true;
-  if ((await listSandboxes()).includes(s.id)) {
-    try { await call('recordstop', { recordingId: recording.recordingId }, 20_000); }
+  if (state?.id === s.id && state?.epoch === s.epoch && (await listSandboxes()).includes(s.id)) {
+    try { await call('recordstop', { recordingId: recording.recordingId }, 20_000, state); }
     catch (e) { stopped = false; warnings.push(`Could not stop guest recorder: ${e.message}`); }
   } else warnings.push('Sandbox is no longer running; publishing preserved partial evidence.');
-  try {
-    const result = await publishRecording(recording.directory, recording.fps);
-    return { recordingId: recording.recordingId, stopped, ...result, warnings: [...warnings, ...result.warnings] };
-  } finally {
-    const live = readState();
-    if (stopped && live?.id === s.id) { delete live.recording; writeState(live); }
-    if (stopped && readRecording()?.recording.recordingId === recording.recordingId) fs.rmSync(RECORDING_FILE);
-  }
+  const result = await publishRecording(recording.directory, recording.fps);
+  if (stopped) clearRecording(HOME, s, recording.recordingId);
+  return { recordingId: recording.recordingId, stopped, ...result, warnings: [...warnings, ...result.warnings] };
 }
 
 export async function screenshot({ windowTitle, pid, name, maxWidth } = {}) {
   const s = await requireSandbox();
   const r = await call('screenshot', { windowTitle, pid, name, maxWidth }, 60_000, s);
   const dir = path.join(s.runDir, 'out', 'screenshots');
-  const previewPath = path.join(dir, r.preview);
-  const preview = await waitFor(() => fs.existsSync(previewPath) && fs.readFileSync(previewPath), 10_000, 'screenshot file');
-  fs.rmSync(previewPath, { force: true });
+  const previewPath = captureFile(dir, r.preview);
+  const imagePath = captureFile(dir, r.file);
+  await waitFor(() => fs.existsSync(previewPath), 10_000, 'screenshot file');
+  const preview = fs.readFileSync(captureFile(dir, r.preview));
+  fs.rmSync(captureFile(dir, r.preview), { force: true });
   updateState(s, (st) => {
     st.lastShot = r;
     (st.lastShots ||= {})[shotOwner] = st.lastShot;
     (st.captures ||= {})[r.captureId] = r;
   });
-  return { captureId: r.captureId, scale: r.scale, path: path.join(dir, r.file), width: r.width, height: r.height, left: r.left, top: r.top,
+  return { captureId: r.captureId, scale: r.scale, path: imagePath, width: r.width, height: r.height, left: r.left, top: r.top,
     previewBase64: preview.toString('base64'), previewWidth: r.previewWidth, previewHeight: r.previewHeight };
 }
 
