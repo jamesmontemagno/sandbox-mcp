@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { formatUiNode, formatUiTree, formatDiff } from '../../src/core.js';
-import { processState, summary } from '../../src/run.js';
+import { processState, summary, renderReport, runFailures } from '../../src/run.js';
 
 test('formatUiNode is one compact line per control', () => {
   assert.equal(formatUiNode({ type: 'Button', name: 'Greet', automationId: 'GreetButton', actions: ['invoke'], depth: 1 }), '  Button "Greet" #GreetButton {invoke}');
@@ -54,4 +54,18 @@ test('processState and summary describe a run', () => {
   assert.match(s, /^PASS {2}Hello\.exe on a fresh Windows Sandbox \(37\.4s\)/);
   assert.match(s, /crashes +none/);
   assert.match(s, /shots +3 screenshot\(s\)/);
+});
+
+test('teardown failure cannot produce a passing run and is visible in both reports', () => {
+  assert.deepEqual(runFailures({ process: { hasExited: false }, crashes: [] }), []);
+  const r = {
+    app: 'Hello.exe', hostDir: 'C:\\app', mode: 'gui', seconds: 1, shots: [], collected: [],
+    process: { hasExited: false }, crashes: [], stopError: 'guest is still running', outDir: 'C:\\out',
+  };
+  r.failures = runFailures(r);
+  r.pass = r.failures.length === 0;
+  assert.equal(r.pass, false);
+  assert.deepEqual(r.failures, ['sandbox teardown failed: guest is still running']);
+  assert.match(summary(r), /^FAIL[\s\S]*sandbox teardown failed: guest is still running/);
+  assert.match(renderReport(r), /\*\*❌ FAIL\*\*: sandbox teardown failed: guest is still running/);
 });

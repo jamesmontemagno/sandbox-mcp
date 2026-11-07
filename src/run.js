@@ -96,12 +96,7 @@ export async function runApp(o) {
 
   const stem = exe.replace(/\.exe$/i, '').toLowerCase();
   r.crashes = (r.errors || []).filter((e) => (e.message || '').toLowerCase().includes(stem));
-  r.failures = [];
-  if (r.error) r.failures.push(r.error);
-  if (r.process?.timedOut) r.failures.push('timed out');
-  else if (r.process?.hasExited && r.process.exitCode !== 0) r.failures.push(`exited with code ${r.process.exitCode ?? 'unknown'}`);
-  if (r.test && r.test.exitCode !== 0) r.failures.push(`test script ${r.test.timedOut ? 'timed out' : `exited with code ${r.test.exitCode}`}`);
-  if (r.crashes.length) r.failures.push(`${r.crashes.length} crash/error event(s) for ${exe}`);
+  r.failures = runFailures(r);
   r.pass = r.failures.length === 0;
 
   if (r.outDir) {
@@ -112,6 +107,17 @@ export async function runApp(o) {
       JSON.stringify({ ...r, shots: r.shots.map(({ previewBase64, ...s }) => s) }, null, 2));
   }
   return r;
+}
+
+export function runFailures(r) {
+  const failures = [];
+  if (r.error) failures.push(r.error);
+  if (r.stopError) failures.push(`sandbox teardown failed: ${r.stopError}`);
+  if (r.process?.timedOut) failures.push('timed out');
+  else if (r.process?.hasExited && r.process.exitCode !== 0) failures.push(`exited with code ${r.process.exitCode ?? 'unknown'}`);
+  if (r.test && r.test.exitCode !== 0) failures.push(`test script ${r.test.timedOut ? 'timed out' : `exited with code ${r.test.exitCode}`}`);
+  if (r.crashes?.length) failures.push(`${r.crashes.length} crash/error event(s) for ${r.app}`);
+  return failures;
 }
 
 const fence = (s) => '```text\n' + (s || '').trimEnd().slice(-20_000) + '\n```';
