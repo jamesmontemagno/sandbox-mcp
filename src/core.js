@@ -2,13 +2,14 @@
 // Host side drives the wsb CLI; a small guest agent (agent/agent.ps1) runs in the sandbox's interactive session.
 // State for the one running sandbox lives in %LOCALAPPDATA%\sandbox-mcp\current.json so the CLI and MCP share it.
 import { execFile, spawn } from 'node:child_process';
-import { randomBytes } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import net from 'node:net';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { atomicJson, readJson, withStateLock, retryFile, createDesktop } from './coordination.js';
 import { deployDirectory } from './deploy.js';
+import { PROTOCOL_VERSION, STALE_BOOT, agentHash, createFramer } from './protocol.js';
 
 export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 export const VERSION = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version;
@@ -145,7 +146,7 @@ function writeState(s) {
 function updateState(target, fn) {
   return withStateLock(HOME, () => {
     const s = readState();
-    if (!s || s.id !== target.id) throw new Error('The sandbox was restarted/replaced; start a new one.');
+    if (!s || s.id !== target.id || s.epoch !== target.epoch) throw new Error(STALE_BOOT);
     const result = fn(s);
     atomicJson(STATE_FILE, s);
     return result;
@@ -193,18 +194,24 @@ const brief = (o) => Object.fromEntries(Object.entries(o).filter(([, v]) => v !=
 // ---------- guest agent channel ----------
 
 function agentCall(target, op, params = {}, timeoutMs = 60_000) {
-  if (target.transport === 'files') return fileCall(target, op, params, timeoutMs);
+  if (!target.epoch || target.identity?.protocolVersion !== PROTOCOL_VERSION) {
+    throw new Error('Sandbox protocol mismatch. Stop the old sandbox and start a new one with this version.');
+  }
+  const framer = createFramer(fs.readFileSync(path.join(target.runDir, 'agent', 'token.txt'), 'utf8').trim(), target.epoch);
+  if (target.transport === 'files') return fileCall(target, op, params, timeoutMs, framer);
+  const counter = updateState(target, (s) => ++s.protocolSeq);
+  const request = framer.seal({ op, ...params }, 'request', counter);
   return new Promise((resolve, reject) => {
     const sock = net.createConnection({ host: target.ip, port: target.port });
     let buf = '';
     sock.setEncoding('utf8');
     sock.setTimeout(timeoutMs, () => sock.destroy(Object.assign(new Error(`agent '${op}' timed out after ${timeoutMs}ms`), { code: 'ETIMEDOUT' })));
-    sock.on('connect', () => sock.write(JSON.stringify({ token: target.token, op, ...params }) + '\n'));
+    sock.on('connect', () => sock.write(JSON.stringify(request) + '\n'));
     sock.on('data', (d) => (buf += d));
     sock.on('error', reject);
     sock.on('end', () => {
       let r;
-      try { r = JSON.parse(buf.trim()); } catch { return reject(new Error(`bad agent response: ${buf.slice(0, 500)}`)); }
+      try { r = framer.open(JSON.parse(buf.trim()), 'response', counter); } catch (e) { e.fatal = true; return reject(e); }
       r.ok ? resolve(r.result) : reject(new Error(r.error));
     });
   });
@@ -212,24 +219,26 @@ function agentCall(target, op, params = {}, timeoutMs = 60_000) {
 
 // Offline transport (Networking disabled): request files in the read-only "in" share, responses in the "out" share.
 // Both sides poll exact file names; direct-path reads through a share are near-instant, directory listings are not.
-async function fileCall(target, op, params, timeoutMs) {
-  const { reqFile, respFile } = updateState(target, (s) => {
+async function fileCall(target, op, params, timeoutMs, framer) {
+  const { reqFile, respFile, counter } = updateState(target, (s) => {
     const n = String((s.mailboxSeq || 0) + 1).padStart(6, '0');
+    const counter = ++s.protocolSeq;
     // Reserve durably before publishing. A killed writer leaves a gap, never a reused request number.
     s.mailboxSeq = Number(n);
     atomicJson(STATE_FILE, s);
     const reqFile = path.join(target.runDir, 'in', 'mailbox', `req-${n}.json`);
     const respFile = path.join(target.runDir, 'out', 'mailbox', `resp-${n}.json`);
-    atomicJson(reqFile, { token: target.token, op, ...params });
+    atomicJson(reqFile, framer.seal({ op, ...params }, 'request', counter));
     // Publish under the same lock so a later writer cannot move seq.txt backwards.
     retryFile(() => fs.writeFileSync(path.join(path.dirname(reqFile), 'seq.txt'), String(Number(n))));
-    return { reqFile, respFile };
+    return { reqFile, respFile, counter };
   });
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     if (fs.existsSync(respFile)) {
       let r;
-      try { r = JSON.parse(fs.readFileSync(respFile, 'utf8').replace(/^\uFEFF/, '')); } catch { await sleep(50); continue; }
+      try { r = JSON.parse(retryFile(() => fs.readFileSync(respFile, 'utf8')).replace(/^\uFEFF/, '')); } catch (e) { e.fatal = true; throw e; }
+      try { r = framer.open(r, 'response', counter); } catch (e) { e.fatal = true; throw e; }
       fs.rmSync(respFile, { force: true }); fs.rmSync(reqFile, { force: true });
       return r.ok ? r.result : Promise.reject(new Error(r.error));
     }
@@ -294,9 +303,12 @@ export async function startSandbox({ network = 'on', internet, memoryMB, window 
   const runDir = path.join(HOME, 'runs', stamp);
   for (const d of ['agent', 'in', 'out']) fs.mkdirSync(path.join(runDir, d), { recursive: true });
   if (network === 'off') { fs.mkdirSync(path.join(runDir, 'in', 'mailbox')); fs.writeFileSync(path.join(runDir, 'in', 'mailbox', 'seq.txt'), '0'); }
-  const token = randomBytes(24).toString('hex');
+  const token = randomBytes(32).toString('hex');
+  const epoch = randomUUID();
   for (const f of fs.readdirSync(path.join(ROOT, 'agent'))) fs.copyFileSync(path.join(ROOT, 'agent', f), path.join(runDir, 'agent', f));
   fs.writeFileSync(path.join(runDir, 'agent', 'token.txt'), token);
+  const identity = { protocolVersion: PROTOCOL_VERSION, agentVersion: VERSION, agentSha256: agentHash(path.join(runDir, 'agent')) };
+  atomicJson(path.join(runDir, 'agent', 'identity.json'), { epoch, ...identity });
 
   const steps = [];
   const step = (s) => { steps.push(`${((Date.now() - t0) / 1000).toFixed(1)}s ${s}`); log(s); };
@@ -319,8 +331,8 @@ export async function startSandbox({ network = 'on', internet, memoryMB, window 
   step(offline ? 'booted (no network)' : `ip ${ip}`);
 
   const target = {
-    id, ip: offline ? null : ip, port: AGENT_PORT, token, runDir, network, transport: offline ? 'files' : 'tcp',
-    startedAt: new Date().toISOString(), startedByPid: process.pid, seq: 0, mailboxSeq: 0, lastShot: null,
+    id, ip: offline ? null : ip, port: AGENT_PORT, epoch, identity, runDir, network, transport: offline ? 'files' : 'tcp',
+    startedAt: new Date().toISOString(), startedByPid: process.pid, seq: 0, mailboxSeq: 0, protocolSeq: 0, lastShot: null,
   };
   try {
     await wsb(['share', '--id', id, '-f', path.join(runDir, 'agent'), '-s', GUEST.agent]);
@@ -353,10 +365,13 @@ export async function startSandbox({ network = 'on', internet, memoryMB, window 
       `cmd /c start /min powershell -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File ${GUEST.agent}\\agent.ps1 ${agentArgs}`]);
     writeState(target); verifiedId = id;
     const hello = await waitFor(() => agentCall(target, 'ping', {}, 3000), 60_000, 'guest agent');
+    if (hello.epoch !== epoch) throw new Error(STALE_BOOT);
+    if (hello.protocolVersion !== identity.protocolVersion) throw new Error(`Sandbox protocol mismatch: expected ${identity.protocolVersion}, got ${hello.protocolVersion}`);
+    if (hello.agentVersion !== identity.agentVersion || hello.agentSha256 !== identity.agentSha256) throw new Error('Sandbox agent identity mismatch: staged agent files do not match the running guest.');
     step(`agent up as ${hello.user}`);
     const bootSeconds = (Date.now() - t0) / 1000;
     audit(target, { op: 'start', network, memoryMB, bootSeconds, ok: true });
-    return { id, ip: target.ip, network, runDir, outDir: path.join(runDir, 'out'), user: hello.user, bootSeconds, steps };
+    return { id, ip: target.ip, epoch, identity, network, runDir, outDir: path.join(runDir, 'out'), user: hello.user, bootSeconds, steps };
   } catch (e) {
     clearState(id); verifiedId = null;
     await wsb(['stop', '--id', id]).catch(() => {});
@@ -400,7 +415,7 @@ export async function status() {
   const s = await current();
   if (!s) return { running: false, otherSandboxes: await listSandboxes() };
   const agent = await agentCall(s, 'ping', {}, 5000).then(() => 'ok', (e) => e.message);
-  return { running: true, id: s.id, ip: s.ip, network: s.network, startedAt: s.startedAt, runDir: s.runDir, outDir: path.join(s.runDir, 'out'), agent };
+  return { running: true, id: s.id, ip: s.ip, epoch: s.epoch, identity: s.identity, network: s.network, startedAt: s.startedAt, runDir: s.runDir, outDir: path.join(s.runDir, 'out'), agent };
 }
 
 // ---------- operations ----------

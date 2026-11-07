@@ -29,6 +29,20 @@ function Get-WindowBounds($h) {
 }
 
 $token = (Get-Content $TokenFile -Raw).Trim()
+$identity = Get-Content (Join-Path $PSScriptRoot 'identity.json') -Raw | ConvertFrom-Json
+$agentFiles = [string[]]@(Get-ChildItem $PSScriptRoot -File | Where-Object Name -NotIn @('token.txt', 'identity.json') | ForEach-Object Name)
+[Array]::Sort($agentFiles, [StringComparer]::Ordinal)
+$sha = [Security.Cryptography.SHA256]::Create()
+try {
+    $manifest = (@($agentFiles | ForEach-Object {
+        $fileHash = [BitConverter]::ToString($sha.ComputeHash([IO.File]::ReadAllBytes((Join-Path $PSScriptRoot $_)))).Replace('-', '').ToLowerInvariant()
+        $_ + [char]0 + $fileHash + "`n"
+    }) -join '')
+    $agentHash = [BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($manifest))).Replace('-', '').ToLowerInvariant()
+} finally { $sha.Dispose() }
+if ($identity.protocolVersion -ne 2 -or $agentHash -ne $identity.agentSha256) { throw 'Sandbox agent identity/protocol mismatch' }
+Add-Type -Path (Join-Path $PSScriptRoot 'protocol.cs') -ReferencedAssemblies System.Web.Extensions
+$protocol = New-Object SbxProtocol $token, ([string]$identity.epoch)
 $shotDir = Join-Path $OutDir 'screenshots'
 New-Item -ItemType Directory -Force $shotDir | Out-Null
 $script:shotCount = 0
@@ -236,11 +250,14 @@ function Op-Diff($req) {
 . "$PSScriptRoot\deploy.ps1"
 
 function Invoke-Request([string]$line) {
+    $counter = 1L
     $resp = try {
-        $req = $line | ConvertFrom-Json
-        if ($req.token -ne $token) { throw 'unauthorized' }
+        $envelope = $line | ConvertFrom-Json
+        if ($envelope.counter -gt 0 -and $envelope.counter -le 9007199254740991) { $counter = [long]$envelope.counter }
+        $req = $protocol.Open($line, 'request', 0) | ConvertFrom-Json
         $result = switch ($req.op) {
-            'ping'       { @{ user = "$env:USERDOMAIN\$env:USERNAME"; computer = $env:COMPUTERNAME; pid = $PID } }
+            'ping'       { @{ user = "$env:USERDOMAIN\$env:USERNAME"; computer = $env:COMPUTERNAME; pid = $PID
+                             epoch = $identity.epoch; protocolVersion = 2; agentVersion = $identity.agentVersion; agentSha256 = $agentHash } }
             'exec'       { Op-Exec $req }
             'launch'     { Op-Launch $req }
             'process'    { Op-Process $req }
@@ -266,7 +283,7 @@ function Invoke-Request([string]$line) {
         if ($ex -is [System.Management.Automation.MethodInvocationException] -and $ex.InnerException) { $ex = $ex.InnerException }
         @{ ok = $false; error = "$($ex.Message)" }
     }
-    $resp | ConvertTo-Json -Compress -Depth 8
+    $protocol.Seal(($resp | ConvertTo-Json -Compress -Depth 8), 'response', $counter)
 }
 
 # Idle watchdog: shutting the guest down ends the sandbox, so a forgotten sandbox doesn't run forever.
@@ -325,6 +342,7 @@ while ($true) {
     $client = $accept.Result
     try {
         $stream = $client.GetStream()
+        $stream.ReadTimeout = 5000
         $reader = New-Object IO.StreamReader($stream, [Text.Encoding]::UTF8)
         $writer = New-Object IO.StreamWriter($stream, (New-Object Text.UTF8Encoding($false))); $writer.AutoFlush = $true
         $writer.WriteLine((Invoke-Request $reader.ReadLine()))

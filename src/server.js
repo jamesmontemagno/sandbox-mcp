@@ -44,7 +44,7 @@ server.registerTool('sandbox_start', {
 
 server.registerTool('sandbox_status', {
   title: 'Sandbox status',
-  description: 'Show the current sandbox (id, network mode, run folder) and whether the guest agent responds.',
+  description: 'Show the current sandbox (id, boot epoch, verified agent protocol/version/SHA256, network mode, run folder) and whether the guest agent responds.',
   inputSchema: {},
 }, tool(async () => text(await sbx.status())));
 

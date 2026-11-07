@@ -53,6 +53,9 @@ no winget. It has Windows PowerShell 5.1 and .NET Framework 4.8. Treat it like a
   It hashes the source and destination, transfers only changed files, removes deleted files and verifies every hash.
   Use a dedicated guest directory (extra guest files are deleted); rebuild only before the deploy, not during it.
   This is explicit reuse of your running sandbox, not a clean-machine test. `sandbox_copy_in` remains full replacement.
+- `sandbox_status` includes the boot epoch and verified agent protocol/version/hash. Both TCP and offline
+  mailbox traffic are encrypted and authenticated; stale boot/protocol errors mean start a fresh sandbox.
+  Never copy the key from the read-only agent share into logs, command lines or tool arguments.
 
 - If a tool says "Windows Sandbox isn't ready on this PC", pass its fix list on to the user (it usually needs an
   admin command and a restart); don't try to work around it. `sbx doctor` re-checks.

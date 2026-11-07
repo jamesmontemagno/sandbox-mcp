@@ -173,7 +173,8 @@ async function main(argv) {
 
     case 'status':
       out(opt, await sbx.status(), (s) => s.running
-        ? `Running: ${s.id} (network ${s.network}, since ${s.startedAt}, agent ${s.agent})\nArtifacts: ${s.outDir}`
+        ? `Running: ${s.id} (network ${s.network}, since ${s.startedAt}, agent ${s.agent})\n` +
+          `Epoch: ${s.epoch}; protocol ${s.identity.protocolVersion}; agent ${s.identity.agentVersion}; SHA256 ${s.identity.agentSha256}\nArtifacts: ${s.outDir}`
         : `No sbx sandbox running.${s.otherSandboxes.length ? ` Other sandbox(es): ${s.otherSandboxes.join(', ')}` : ''}`);
       return 0;
 

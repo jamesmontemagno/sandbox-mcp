@@ -314,6 +314,13 @@ CLI commands to retain a multi-command turn too; anonymous CLI commands release 
 `sbx desktop-release` or `sandbox_desktop_release`. A contender waits at most 60 seconds, then reports
 `desktop busy: held by <owner>`. These are cooperative turns, not isolation: `exec` can itself start GUI programs.
 
+Each boot has an epoch and a verified agent identity (protocol version, agent version and SHA256 of staged
+agent files), included in `status --json`. A stale boot or incompatible protocol is refused: start a new sandbox.
+Both TCP and offline mailbox messages use directional HKDF-SHA256 keys, AES-256-CBC encryption and
+HMAC-SHA256 authentication with counters, random IVs and timestamp/replay checks. The random transport key
+stays in the read-only agent share, never in `current.json`, command-line arguments or request/response messages.
+This protects the transport, not against an administrator inside the guest: code there can read its agent share.
+
 ## Test scripts
 
 `sbx run --test smoke.ps1` (or `sandbox_run` with `testScript`) runs your script **inside** the sandbox after the app

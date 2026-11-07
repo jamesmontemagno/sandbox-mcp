@@ -7,6 +7,7 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import * as sbx from '../src/core.js';
 import path from 'node:path';
 import { atomicJson, readJson, withStateLock } from '../src/coordination.js';
+import { protocolProof } from './protocol-proof.js';
 
 const run = promisify(execFile);
 const cli = (command, ...args) => run(process.execPath, [path.join(sbx.ROOT, 'src', 'cli.js'), command, '--json', ...args], { timeout: 120_000 });
@@ -27,6 +28,7 @@ for (const network of ['on', 'firewall', 'off']) {
   try {
     const start = await sbx.startSandbox({ network });
     started = true;
+    await protocolProof(await sbx.current());
     assert.equal(JSON.parse(await call('sandbox_status')).running, true);
     await Promise.all(Array.from({ length: 5 }, (_, i) => i % 2
       ? call('sandbox_exec', { command: `"mcp-${i}"` })
