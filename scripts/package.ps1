@@ -8,6 +8,9 @@ $package = Get-Content (Join-Path $repoRoot 'package.json') -Raw | ConvertFrom-J
 $node = Get-Command node.exe -ErrorAction Stop
 $nodeVersion = (& $node.Source --version).Trim()
 $architecture = (& $node.Source -p 'process.arch').Trim()
+$sourceCommit = (& git -C $repoRoot rev-parse HEAD).Trim()
+if ($LASTEXITCODE -ne 0 -or $sourceCommit -notmatch '^[a-f0-9]{40}$') { throw 'Cannot identify the package source commit.' }
+$channel = if ($env:SANDBOX_MCP_BUILD_CHANNEL) { $env:SANDBOX_MCP_BUILD_CHANNEL } else { 'local-candidate' }
 
 if ([int]($nodeVersion -replace '^v(\d+).*', '$1') -lt 20) {
   throw "Node.js 20 or later is required to build the package (found $nodeVersion)."
@@ -40,6 +43,8 @@ Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'sandbox-mcp.cmd') -Destination 
   "sandbox-mcp $($package.version)"
   'Platform: Windows x64'
   "Bundled runtime: Node.js $nodeVersion (license: NODE-LICENSE.txt)"
+  "Source commit: $sourceCommit"
+  "Build channel: $channel"
 ) | Set-Content -LiteralPath (Join-Path $stage 'BUILD-INFO.txt') -Encoding UTF8
 
 Push-Location $stage

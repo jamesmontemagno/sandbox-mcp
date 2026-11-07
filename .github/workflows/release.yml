@@ -20,16 +20,37 @@ jobs:
           cache: npm
       - run: npm ci --omit=dev
       - run: npm test
+      - name: Identify build channel
+        shell: pwsh
+        run: |
+          $channel = if ('${{ github.event_name }}' -eq 'release') { 'release' } else { 'feature-preview' }
+          "SANDBOX_MCP_BUILD_CHANNEL=$channel" >> $env:GITHUB_ENV
       - run: npm run package:win
       - name: Smoke-test portable package
         run: node test/package-smoke.js (Get-ChildItem dist\*.zip | Select-Object -First 1 -ExpandProperty FullName)
         shell: pwsh
+      - name: Name candidate and publish SHA256
+        shell: pwsh
+        run: |
+          $asset = Get-ChildItem dist\*.zip | Select-Object -First 1
+          if ('${{ github.event_name }}' -eq 'workflow_dispatch') {
+            $version = node -p "require('./package.json').version"
+            $short = '${{ github.sha }}'.Substring(0, 7)
+            $name = "sandbox-mcp-feature-preview-$version-$short-win-x64.zip"
+            Rename-Item -LiteralPath $asset.FullName -NewName $name
+            $asset = Get-Item (Join-Path $asset.DirectoryName $name)
+          }
+          $hash = (Get-FileHash -LiteralPath $asset.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+          [IO.File]::WriteAllText("$($asset.FullName).sha256", "$hash  $($asset.Name)`n", [Text.UTF8Encoding]::new($false))
+          "### Verified Windows x64 package`n`n``$($asset.Name)```n`nSHA256: ``$hash``" >> $env:GITHUB_STEP_SUMMARY
       - name: Keep package (manual run)
         if: github.event_name == 'workflow_dispatch'
         uses: actions/upload-artifact@v4
         with:
           name: sandbox-mcp-win-x64
-          path: dist/*.zip
+          path: |
+            dist/*.zip
+            dist/*.sha256
           if-no-files-found: error
       - name: Upload Windows x64 package
         if: github.event_name == 'release'
@@ -41,5 +62,6 @@ jobs:
           $tag = $env:RELEASE_TAG
           if ($tag -ne "v$version") { throw "Release tag $tag does not match package version v$version." }
           $asset = Get-ChildItem dist\*.zip | Select-Object -First 1 -ExpandProperty FullName
-          gh release upload $tag $asset --clobber
+          gh release upload $tag $asset "$asset.sha256" --clobber
+          if ($LASTEXITCODE -ne 0) { throw 'Release asset/checksum upload failed.' }
         shell: pwsh

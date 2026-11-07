@@ -1,45 +1,62 @@
 # sandbox-mcp
 
-**Fresh, throwaway Windows machines for testing your apps.** One command (or one MCP tool call) boots a clean
-Windows 11 in [Windows Sandbox](https://learn.microsoft.com/windows/security/application-security/application-isolation/windows-sandbox/),
-copies your build in, runs it, drives its UI, screenshots it, checks for crashes, copies the results out and
-deletes the machine. The measured GUI samples take roughly 40-50 seconds, start to finish.
+## Give your AI agent a brand-new Windows PC. Then throw it away.
 
-> **Development feature preview, not a published release.** The current public
-> [v1.1.0 download](https://github.com/shanselman/sandbox-mcp/releases/tag/v1.1.0) provides the portable baseline
-> and `doctor`. This working tree adds verified incremental deploy, coordinated CLI/MCP access, boot-bound
-> encrypted transport, dependency diagnosis/opt-in provisioning, packaged activation and bounded recording.
-> Use a ZIP explicitly named `sandbox-mcp-feature-preview-<commit>-win-x64.zip`, or this revision's source,
-> for those additions. Its package version remains 1.1.0; the commit identifies the unreleased build.
+Not your desktop. Not a container pretending to be Windows. **A real, disposable Windows 11 machine**:
+boot it, deploy your app, drive the controls, catch the crash, keep the evidence, delete the PC.
+One MCP tool call or `sbx run`. The measured GUI samples take roughly **40-50 seconds** end to end.
+
+![Haptics Everywhere's Windows desktop research lab running inside a real Windows Sandbox](docs/haptics-sandbox.png)
+
+*Real app, real guest: Haptics Everywhere's Windows desktop lab from an earlier Sandbox demo. UI controls and screenshots
+were exercised; actual haptic-device access is **not** claimed. [Light-theme inspector](docs/haptics-inspector.png).*
+
+### 🤖 Let your agent set it up
+
+Give this to your bot. It checks the PC, verifies the download, preserves your MCP configuration and asks before
+admin changes or a restart:
 
 ```text
-> sbx run .\samples\HelloSandbox\bin --test .\samples\HelloSandbox\test.ps1
-
-[sbx] booting a fresh Windows Sandbox (network on)
-[sbx] started 4ebd5e89-0df5-457e-b15e-70f48dce0591
-[sbx] ip 172.25.229.32
-[sbx] folders shared
-[sbx] user session ready
-[sbx] agent up as 6CB5E6E5-FD41-4\WDAGUtilityAccount
-[sbx] copying D:\github\sandbox-mcp\samples\HelloSandbox\bin to C:\apps\HelloSandbox
-[sbx] running HelloSandbox.exe
-[sbx] running test test.ps1
-[sbx] destroying the sandbox
-PASS  HelloSandbox.exe on a fresh Windows Sandbox (37.4s)
-  sandbox  network on, booted in 14.9s
-  process  still running, window "Hello Sandbox"
-  crashes  none
-  test     test.ps1 passed
-  shots    3 screenshot(s)
-  report   C:\Users\you\AppData\Local\sandbox-mcp\runs\20261106-190012\out\report.md
+Set up Windows Sandbox MCP by following:
+https://raw.githubusercontent.com/shanselman/sandbox-mcp/shanselman-sandbox-feature-integration/docs/agent-setup.md
+Use the 1.2.0 candidate for the new features; ask before admin changes or a restart.
 ```
 
-The test script typed a name into the app with UI Automation, clicked **Greet** and waited for the answer. This is the
-screenshot it brought back from inside the sandbox:
+**1.2.0 candidate, not a public release yet.** Use the [pushed source branch](https://github.com/shanselman/sandbox-mcp/tree/shanselman-sandbox-feature-integration)
+or its [manual-build artifacts](https://github.com/shanselman/sandbox-mcp/actions/workflows/release.yml?query=branch%3Ashanselman-sandbox-feature-integration).
+The [published v1.1.0 ZIP](https://github.com/shanselman/sandbox-mcp/releases/tag/v1.1.0) is the stable baseline;
+it does not contain the new recording/deploy/provisioning/package features described here.
 
-![HelloSandbox in a fresh offline Windows Sandbox after its UIA test](docs/compatibility/hello.png)
+### “Works on my machine.” Caught in 30 seconds.
 
-The same flow runs WinUI, WPF and native Win32 apps, including dev-signed MSIX packages:
+The dev box had Visual C++ installed. The fresh, **network-off** customer PC did not:
+
+```text
+FAIL  NativeProof.exe on a fresh Windows Sandbox (29.8s)
+  why      exited with code -1073741515; Missing dependency: VC++ redistributable.
+```
+
+Opt in to the verified runtime install, then repeat on another fresh guest:
+
+```text
+PASS  NativeProof.exe on a fresh Windows Sandbox (30.9s)
+  baseline PROVISIONED (not a clean-machine pass): VC++ redistributable  x64
+  process  exited with code 0
+```
+
+Those are [actual measured results](docs/compatibility.md#combined-feature-verification), not illustrative output.
+The installer was Microsoft-signed **14.51.36247.0**, downloaded and verified on the host. Guest networking stayed
+off. `sbx deps app.exe` diagnoses; `sbx run app.exe --provision auto` installs **only when explicitly requested**.
+
+### What your agent gets
+
+| A clean customer PC | A real desktop to drive | Evidence that survives |
+|---|---|---|
+| Fresh on every boot; no implicit app-runtime installs | Native UIA: inspect, type, click, toggle, wait | PNGs, bounded recordings, self-contained HTML, optional MP4 |
+| Dependency diagnosis; explicit verified provisioning | WinUI, WPF, WinForms, Win32; MSIX/AUMID activation | Process state, exit codes, crash events, reports |
+| Network **off / firewall / on** | CLI + MCP share state; verified warm incremental deploy | Installer/uninstaller diffs; detonation observations |
+
+Same clean-machine loop, different frameworks:
 
 | WinUI 3, packaged | WPF, self-contained | Native Win32, packaged |
 |---|---|---|
@@ -49,13 +66,19 @@ These are real offline-guest screenshots, not host mockups. WinUI/WPF were refre
 source; the full matrix covers seven configurations. Exact builds, timings, startup defects
 found and remaining coverage gaps are in the [compatibility evidence](docs/compatibility.md).
 
-It's both:
+[Download/setup](#download-and-try-it-no-nodejs-install) · [Agent setup guide](docs/agent-setup.md) ·
+[Measured compatibility and honest limits](docs/compatibility.md) · [MCP tools](#mcp-tools)
 
-- an **MCP server** so AI agents (GitHub Copilot, Claude, Cursor, VS Code, ...) can test the apps they just built
-  on a machine that isn't yours, and
-- a **CLI (`sbx`)** for you, your scripts and your CI.
+<details>
+<summary>See a fresh, recorded UI Automation session</summary>
 
-They share state, so you can `sbx start`, let an agent poke at the app, then `sbx stop`.
+![UI Automation changes real WinUI controls inside a network-off Sandbox](docs/sandbox-in-action.gif)
+
+This 138 KB animation comes from a new 74-frame guest recording: UIA changes the text, invokes buttons and
+increments the counter. The guest was stopped afterward; the HTML viewer, MP4 and frames remained on the host.
+No synthetic screenshots. This small fixture proves the automation path; the rich app above shows the real-app use case.
+
+</details>
 
 ## Why
 
@@ -687,7 +710,7 @@ node test\integration.js on
 node test\integration.js firewall
 node test\evidence.js
 npm run package:win
-node test\package-smoke.js dist\sandbox-mcp-win-x64-v1.1.0.zip
+node test\package-smoke.js dist\sandbox-mcp-win-x64-v1.2.0.zip
 ```
 
 The integration harness drives the actual MCP stdio server and CLI against the same fresh guest, verifies UIA,
@@ -695,6 +718,11 @@ copies evidence back, and fails if its guest cannot be torn down. JSON results a
 `$env:SANDBOX_MCP_HOME\integration`. The package smoke test extracts the ZIP, removes host Node from PATH, checks
 CLI/MCP initialization and command surfaces, and compares every shipped source, agent and skill file with the
 working tree. It does not boot a Sandbox and is not a substitute for the live tests.
+
+`node test\agent-setup.js --download` follows the stable-download checksum/doctor instructions in a temporary
+home, tests all three JSON client destinations on PowerShell 5.1/7, checks native `copilot mcp add` with isolated
+`COPILOT_HOME`, and requires an actual MCP `sandbox_status` response. It needs the installed Copilot CLI for
+the native-command check. For a candidate, use `--portable=<extracted-candidate-path>` instead of `--download`.
 
 For a live extracted-package check, run the integration harness with the extracted `node.exe` and set
 `SANDBOX_MCP_TEST_ROOT` to the extracted folder. `SANDBOX_MCP_TEST_SHA` records the source commit when Git is not on

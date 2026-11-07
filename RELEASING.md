@@ -5,9 +5,9 @@ GitHub Actions builds and attaches the ZIP; nothing is uploaded by hand.
 
 ## Local feature previews are not releases
 
-The currently published baseline is v1.1.0. This revision's additional tools are unreleased. For a local
-handoff, keep the package version unchanged, commit the intended source/docs/screenshots, build with
-`npm run package:win`, then copy the ZIP to `sandbox-mcp-feature-preview-<short-commit>-win-x64.zip`.
+The currently published baseline is v1.1.0. This revision is a **1.2.0 candidate**, not a public release.
+Commit the intended source/docs/screenshots, build with `npm run package:win`, then copy the ZIP to
+`sandbox-mcp-feature-preview-1.2.0-<short-commit>-win-x64.zip`.
 Record the full commit and ZIP SHA256 alongside real run/report paths. Do not tag, push, create a release,
 or imply that `/releases/latest` contains the preview.
 
@@ -17,6 +17,11 @@ Extract that exact ZIP and run `test\integration.js` with its bundled `node.exe`
 `SANDBOX_MCP_EXPECT_NO_HOST_NODE=1`. Keep Windows system directories and the WindowsApps `wsb.exe` alias on
 PATH but remove host Node. Verify owned-guest teardown. Hosted CI cannot provide this real desktop proof.
 The compatibility screenshots and observations must describe tested builds, not unmeasured framework promises.
+After an authorized feature-branch push, `gh workflow run release.yml --ref <branch>` provides a hosted build
+without publishing. The workflow names its ZIP as a feature preview, includes a `.sha256` sidecar and source
+commit/build channel in `BUILD-INFO.txt`, and uploads both as `sandbox-mcp-win-x64`. Download and verify that exact
+artifact for the real extracted-package proof. A source push or successful manual build is not a release.
+Published-release workflows also upload the checksum alongside the versioned ZIP.
 
 ## Publishing a separately authorized release
 

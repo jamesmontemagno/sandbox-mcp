@@ -27,7 +27,7 @@ const node = path.join(unpacked, 'node.exe');
 const cli = path.join(unpacked, 'sbx.cmd');
 const packageMetadata = JSON.parse(fs.readFileSync(path.join(unpacked, 'package.json'), 'utf8'));
 const sourceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-for (const directory of ['src', 'agent', 'skills']) {
+for (const directory of ['src', 'agent', 'skills', 'docs']) {
   const source = path.join(sourceRoot, directory);
   for (const relative of fs.readdirSync(source, { recursive: true })) {
     const original = path.join(source, relative);
@@ -37,6 +37,11 @@ for (const directory of ['src', 'agent', 'skills']) {
     const digest = (file) => createHash('sha256').update(fs.readFileSync(file)).digest('hex');
     assert.equal(digest(packaged), digest(original), `Packaged ${directory}\\${relative} differs from the tested source.`);
   }
+  for (const relative of ['README.md', 'LICENSE', 'package.json']) {
+    assert.deepEqual(fs.readFileSync(path.join(unpacked, relative)), fs.readFileSync(path.join(sourceRoot, relative)),
+      `Packaged ${relative} differs from the tested source.`);
+  }
+  assert.match(fs.readFileSync(path.join(unpacked, 'BUILD-INFO.txt'), 'utf8'), /Source commit: [a-f0-9]{40}/);
 }
 assert.ok(fs.existsSync(node), 'Bundled Node.js runtime is missing.');
 assert.ok(fs.existsSync(path.join(unpacked, 'NODE-LICENSE.txt')), 'Node.js license is missing.');

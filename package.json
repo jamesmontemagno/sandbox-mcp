@@ -1,6 +1,6 @@
 {
   "name": "sandbox-mcp",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Fresh, throwaway Windows machines for testing your apps: an MCP server and CLI that automate Windows Sandbox",
   "main": "src/core.js",
   "type": "module",
@@ -16,13 +16,36 @@
     "package:win": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/package.ps1",
     "test:package": "node test/package-smoke.js"
   },
-  "files": ["src", "agent", "skills", "README.md", "LICENSE"],
-  "engines": { "node": ">=20" },
-  "os": ["win32"],
-  "keywords": ["mcp", "model-context-protocol", "windows-sandbox", "windows", "sandbox", "testing", "automation", "ai-agent", "wsb"],
+  "files": [
+    "src",
+    "agent",
+    "skills",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "os": [
+    "win32"
+  ],
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "windows-sandbox",
+    "windows",
+    "sandbox",
+    "testing",
+    "automation",
+    "ai-agent",
+    "wsb"
+  ],
   "author": "Scott Hanselman",
   "license": "MIT",
-  "repository": { "type": "git", "url": "git+https://github.com/shanselman/sandbox-mcp.git" },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/shanselman/sandbox-mcp.git"
+  },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.32.2",
     "zod": "^4.6.7"
