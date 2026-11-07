@@ -36,13 +36,41 @@ test('capture filenames cannot read or delete an outside tripwire or follow repa
   assert.equal(captureFile(directory, 'valid.preview.png'), path.join(directory, 'valid.preview.png'));
   assert.throws(() => captureFile(path.join(directory, 'linked', 'screenshots'), 'tripwire.png'), /reparse point/,
     'a reparse ancestor is rejected, not just the final directory');
+  fs.symlinkSync(path.join(root, 'missing-target'), path.join(directory, 'dangling'), 'junction');
+  assert.throws(() => captureFile(path.join(directory, 'dangling'), 'tripwire.png'), /reparse point/);
 });
 
-test('capture allows legitimate Windows 8.3 directory aliases without treating them as reparse escapes', () => {
-  const short = 'C:\\PROGRA~1';
-  assert.ok(fs.existsSync(short), 'Windows Program Files short alias is required for this Windows-only regression.');
+test('capture allows canonical and short directory spellings without weakening file confinement', (t) => {
+  const base = path.parse(os.tmpdir()).root;
+  const short = path.join(base, 'LEGITI~1', 'screenshots');
+  const canonical = path.join(base, 'Legitimate long directory', 'screenshots');
+  const name = 'proof.png';
+  t.mock.method(fs, 'existsSync', () => true);
+  t.mock.method(fs, 'lstatSync', () => ({ isSymbolicLink: () => false }));
+  t.mock.method(fs, 'statSync', () => ({ isFile: () => true }));
+  let escape = false;
+  t.mock.method(fs.realpathSync, 'native', (p) => {
+    if (p === short || p === canonical) return canonical;
+    if (p === path.join(short, name) || p === path.join(canonical, name)) return escape ? path.join(base, 'outside', name) : path.join(canonical, name);
+    throw new Error(`Unexpected realpath query: ${p}`);
+  });
+  assert.equal(captureFile(short, name), path.join(short, name));
+  assert.equal(captureFile(canonical, name), path.join(canonical, name));
+  escape = true;
+  assert.throws(() => captureFile(short, name), /reparse point/);
+});
+
+test('native capture directory alias probe when Windows has 8.3 names', (t) => {
+  const short = path.join(path.parse(process.env.ProgramFiles || os.tmpdir()).root, 'PROGRA~1');
+  if (!fs.existsSync(short) || fs.lstatSync(short).isSymbolicLink()) {
+    t.skip('Native Program Files 8.3 alias is unavailable; deterministic alias/confinement regression ran separately.');
+    return;
+  }
   const canonical = fs.realpathSync.native(short);
-  assert.notEqual(short.toLowerCase(), canonical.toLowerCase());
+  if (short.toLowerCase() === canonical.toLowerCase()) {
+    t.skip('Native short-to-long spelling is unavailable; deterministic alias/confinement regression ran separately.');
+    return;
+  }
   assert.ok(!fs.lstatSync(short).isSymbolicLink());
   assert.equal(captureFile(short, 'pending-proof.png'), path.join(short, 'pending-proof.png'));
   assert.equal(captureFile(canonical, 'pending-proof.png'), path.join(canonical, 'pending-proof.png'));

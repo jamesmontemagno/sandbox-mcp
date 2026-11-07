@@ -7,7 +7,10 @@ export function captureFile(directory, name) {
   const file = path.resolve(directory, name);
   let candidate = file;
   while (true) {
-    if (fs.existsSync(candidate) && fs.lstatSync(candidate).isSymbolicLink()) {
+    let stat;
+    try { stat = fs.lstatSync(candidate); }
+    catch (error) { if (error.code !== 'ENOENT') throw error; }
+    if (stat?.isSymbolicLink()) {
       throw new Error('Screenshot path escapes its evidence directory through a reparse point.');
     }
     const parent = path.dirname(candidate);

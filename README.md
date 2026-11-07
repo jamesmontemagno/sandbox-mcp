@@ -6,10 +6,13 @@ Not your desktop. Not a container pretending to be Windows. **A real, disposable
 boot it, deploy your app, drive the controls, catch the crash, keep the evidence, delete the PC.
 One MCP tool call or `sbx run`. The measured GUI samples take roughly **40-50 seconds** end to end.
 
-![Haptics Everywhere's Windows desktop research lab running inside a real Windows Sandbox](docs/haptics-sandbox.png)
+![Real offline Sandbox: Haptics app UI Automation, light-to-dark theme, app exit and guest teardown](docs/sandbox-teaser.gif)
 
-*Real app, real guest: Haptics Everywhere's Windows desktop lab from an earlier Sandbox demo. UI controls and screenshots
-were exercised; actual haptic-device access is **not** claimed. [Light-theme inspector](docs/haptics-inspector.png).*
+*Real app, real guest: Haptics Everywhere's self-contained WPF/WinForms desktop app in a fresh, network-off Sandbox.
+UIA selects the Inspector, the guest switches light to dark, the app relaunches and exits, then the guest is destroyed.
+11-second, 144 KB edited/sped-up footage; boot/teardown title cards summarize actual logs, not filmed boot/shutdown.
+No guest runtime installation or haptic-hardware claim. [Fresh dark lab screenshot](docs/haptics-teaser.png) ·
+[Earlier light-theme inspector](docs/haptics-inspector.png).*
 
 ### 🤖 Let your agent set it up
 
@@ -18,14 +21,12 @@ admin changes or a restart:
 
 ```text
 Set up Windows Sandbox MCP by following:
-https://raw.githubusercontent.com/shanselman/sandbox-mcp/shanselman-sandbox-feature-integration/docs/agent-setup.md
-Use the 1.2.0 candidate for the new features; ask before admin changes or a restart.
+https://raw.githubusercontent.com/shanselman/sandbox-mcp/main/docs/agent-setup.md
+Install the latest verified release; ask before admin changes or a restart.
 ```
 
-**1.2.0 candidate, not a public release yet.** Use the [pushed source branch](https://github.com/shanselman/sandbox-mcp/tree/shanselman-sandbox-feature-integration)
-or its [manual-build artifacts](https://github.com/shanselman/sandbox-mcp/actions/workflows/release.yml?query=branch%3Ashanselman-sandbox-feature-integration).
-The [published v1.1.0 ZIP](https://github.com/shanselman/sandbox-mcp/releases/tag/v1.1.0) is the stable baseline;
-it does not contain the new recording/deploy/provisioning/package features described here.
+**[Download v1.2.0](https://github.com/shanselman/sandbox-mcp/releases/tag/v1.2.0)**: portable CLI + MCP server,
+bundled Node.js, guest agent and setup instructions. No Node/npm installation needed.
 
 ### “Works on my machine.” Caught in 30 seconds.
 
@@ -174,8 +175,8 @@ and extract it. The ZIP includes `sbx`, the MCP server, their dependencies, the 
 Node.js runtime. You do not need to clone the repo, install Node/npm, or add anything to PATH.
 The package is built and tested on native Windows x64; ARM64 is not currently packaged.
 
-The public v1.1.0 ZIP is the baseline, not this unreleased feature preview. The portable setup below works for
-either; use the feature-preview ZIP or this source revision for the new tools described on this page.
+Verify the ZIP against its adjacent `.sha256` file before extracting; the [agent setup guide](docs/agent-setup.md)
+does that automatically and preserves existing client configuration.
 
 Open PowerShell in the extracted folder and start with the read-only readiness check:
 
@@ -203,7 +204,7 @@ the `wsb` command-line tool that `sbx` uses. Run the check again and try a built
 
 A passing run leaves `report.md`, `report.json`, screenshots and `audit.jsonl` under
 `%LOCALAPPDATA%\sandbox-mcp\runs\<timestamp>` (`out` contains the report and media), even after teardown.
-`--open` opens the report. Preview builds also support `--record`, with a self-contained viewer under
+`--open` opens the report. Add `--record` for a self-contained viewer under
 `out\recordings\<recordingId>\recording.html` and MP4 when host ffmpeg is available. `SANDBOX_MCP_HOME`
 changes the artifact root. No ffmpeg or app runtime is silently installed.
 
@@ -292,9 +293,8 @@ if it can't reach Windows Sandbox. The full list of what you need:
 
 ## Install from source
 
-The clone command below retrieves the public default branch, not this unpublished preview. For preview-only
-features and the new WinUI/WPF samples, use the source checkout matching the feature-preview commit supplied
-with your handoff. Samples are not included in the portable ZIP.
+The clone command below retrieves the public default branch. Check out `v1.2.0` to reproduce that release's
+source and WinUI/WPF samples exactly. Samples are not included in the portable ZIP.
 
 ```powershell
 git clone https://github.com/shanselman/sandbox-mcp
@@ -722,7 +722,8 @@ working tree. It does not boot a Sandbox and is not a substitute for the live te
 `node test\agent-setup.js --download` follows the stable-download checksum/doctor instructions in a temporary
 home, tests all three JSON client destinations on PowerShell 5.1/7, checks native `copilot mcp add` with isolated
 `COPILOT_HOME`, and requires an actual MCP `sandbox_status` response. It needs the installed Copilot CLI for
-the native-command check. For a candidate, use `--portable=<extracted-candidate-path>` instead of `--download`.
+the native-command check. Use `--portable=<extracted-path>` for an already downloaded package, or `--candidate`
+to exercise the explicitly optional developer-preview discovery instructions.
 
 For a live extracted-package check, run the integration harness with the extracted `node.exe` and set
 `SANDBOX_MCP_TEST_ROOT` to the extracted folder. `SANDBOX_MCP_TEST_SHA` records the source commit when Git is not on

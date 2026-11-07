@@ -42,8 +42,8 @@ These are measured versions, not an exact-SDK requirement for using sandbox-mcp.
 
 ## Reproduce
 
-Use the [source samples and build commands](../samples/README.md) from this matching feature-preview checkout
-(the unpublished samples are not implied to exist on public `main`). Invoke `Wpf.exe`, `WinForms.exe` and
+Use the [source samples and build commands](../samples/README.md) from the matching release checkout
+(`git checkout v1.2.0` for that release). Invoke `Wpf.exe`, `WinForms.exe` and
 `HelloWinUI.exe` explicitly: self-contained .NET folders can contain `createdump.exe`, so a bare folder is
 deliberately ambiguous. The entire folder is still copied when an EXE is selected.
 
@@ -98,9 +98,11 @@ This fixture defect is not evidence that WinUI itself is unsupported.
 
 The integration lane reran the combined runtime source at
 `39da7ecd86599fc1c14d844c464068003bd0138e` on 2026-11-07 UTC, rather than treating component proofs as
-integration acceptance. Subsequent onboarding/skill/screenshot edits do not change `src` or `agent` bytes;
-the final feature-preview ZIP is separately parity-checked and exercised after extraction with no host Node
-on PATH. Its filename and handoff identify the final documentation commit, not a new public version.
+integration acceptance. The original local-preview ZIP was separately parity-checked and exercised after
+extraction with no host Node on PATH. These are historical measurements of that exact source, not a claim that
+every later byte was tested then. Version 1.2.0 additionally fixes legitimate Windows 8.3 path spellings while
+preserving reparse-point confinement; its hosted build checks source/package parity and published ZIP
+verification requires a fresh bundled-runtime offline run as described in [releasing](../RELEASING.md).
 
 | Combined check | Observed result |
 |---|---|

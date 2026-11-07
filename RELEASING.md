@@ -3,13 +3,12 @@
 A release is a tag plus a Windows x64 portable ZIP (bundled Node, `sbx`, the MCP server, guest agent and skills).
 GitHub Actions builds and attaches the ZIP; nothing is uploaded by hand.
 
-## Local feature previews are not releases
+## Verify the build before publication
 
-The currently published baseline is v1.1.0. This revision is a **1.2.0 candidate**, not a public release.
-Commit the intended source/docs/screenshots, build with `npm run package:win`, then copy the ZIP to
+Commit intended source/docs/screenshots and build with `npm run package:win`. For an optional local preview, copy the ZIP to
 `sandbox-mcp-feature-preview-1.2.0-<short-commit>-win-x64.zip`.
-Record the full commit and ZIP SHA256 alongside real run/report paths. Do not tag, push, create a release,
-or imply that `/releases/latest` contains the preview.
+Record the full commit and ZIP SHA256 alongside real run/report paths. A preview is not a published release;
+do not imply that `/releases/latest` contains an unpublished build.
 
 Run `node test\package-smoke.js <zip>` to compare shipped source/agent/skill bytes and CLI/MCP surfaces.
 Extract that exact ZIP and run `test\integration.js` with its bundled `node.exe`, a fresh isolated
@@ -23,7 +22,7 @@ commit/build channel in `BUILD-INFO.txt`, and uploads both as `sandbox-mcp-win-x
 artifact for the real extracted-package proof. A source push or successful manual build is not a release.
 Published-release workflows also upload the checksum alongside the versioned ZIP.
 
-## Publishing a separately authorized release
+## Publishing an authorized release
 
 1. **Bump the version:** `npm version X.Y.Z --no-git-tag-version` (updates `package.json` and the lockfile). Commit,
    push to `main` and wait for `ci` to go green.

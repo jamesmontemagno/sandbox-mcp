@@ -5,8 +5,8 @@ description: Test a Windows desktop or console app, or its installer, on a fresh
 
 # Testing apps in Windows Sandbox
 
-This revision documents an unreleased feature preview; the public v1.1.0 ZIP does not contain every tool below.
-Use the matching feature-preview ZIP or source commit. Follow the README's edition/virtualization, administrator
+This skill documents v1.2.0. Use the matching release ZIP or source commit; older ZIPs do not contain every tool below.
+Follow the README's edition/virtualization, administrator
 feature-enable, restart and first-launch instructions, then run `sbx doctor` before any guest work.
 
 Windows Sandbox is a clean Windows 11 VM that boots in ~15-20 s and is **destroyed on stop**. Only **one** can run at a

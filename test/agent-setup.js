@@ -61,7 +61,7 @@ try {
       fs.writeFileSync(config, commented);
       assert.throws(() => execFileSync(shell, ['-NoProfile', '-NonInteractive', '-Command', command], { stdio: 'pipe', timeout: 30_000, windowsHide: true }));
       assert.equal(fs.readFileSync(config, 'utf8'), commented, 'JSONC must be retained for a native client edit');
-      for (const malformed of ['true', '42', JSON.stringify({ [key]: true }), JSON.stringify({ [key]: 42 })]) {
+      for (const malformed of ['true', '42', '[{}]', JSON.stringify({ [key]: true }), JSON.stringify({ [key]: 42 }), JSON.stringify({ [key]: [{}] })]) {
         fs.writeFileSync(config, malformed);
         assert.throws(() => execFileSync(shell, ['-NoProfile', '-NonInteractive', '-Command', command], { stdio: 'pipe', timeout: 30_000, windowsHide: true }));
         assert.equal(fs.readFileSync(config, 'utf8'), malformed, 'malformed scalar configuration must not be rewritten');

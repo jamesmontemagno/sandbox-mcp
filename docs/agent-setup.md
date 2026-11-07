@@ -9,17 +9,14 @@ Stop and explain a blocked prerequisite rather than silently treating it as conf
 Confirm which **client, harness and configuration scope** you are running in. Do not infer `.vscode\mcp.json`
 just because the editor is VS Code: modern Copilot sessions can use **Copilot Global**.
 
-- **Stable install:** the latest public release is currently **v1.1.0**, with `sbx doctor` and the baseline app
-  testing loop. Do not promise 1.2.0 tools after installing it.
-- **New-feature candidate:** use the pushed
-  [1.2.0 feature branch](https://github.com/shanselman/sandbox-mcp/tree/shanselman-sandbox-feature-integration)
-  and its [manual workflow artifacts](https://github.com/shanselman/sandbox-mcp/actions/workflows/release.yml?query=branch%3Ashanselman-sandbox-feature-integration).
-  These are not stable releases. GitHub artifact downloads require an authorized GitHub account. Discover a
-  successful manual run using the candidate block below; freeze that run/commit and verify its artifact before
-  extraction. No private chat handoff is needed. If artifact access is unavailable, say so; do not substitute
-  stable invisibly.
-- **Matching source:** clone with `git clone --branch shanselman-sandbox-feature-integration
-  https://github.com/shanselman/sandbox-mcp`, verify the handoff commit, then `npm ci --omit=dev` and
+- **Normal install:** use the latest public stable release. Version 1.2.0 includes recording, deployment,
+  dependency diagnosis, explicit provisioning and package activation. Freeze the resolved release/version
+  before download; do not silently substitute an older release when a requested version is unavailable.
+- **Developer build only:** a successful manual `Release` workflow artifact is an optional preview, not a
+  stable release. Use it only when the user explicitly requests preview/development source; see step 3's
+  optional developer block. GitHub artifact downloads require an authorized GitHub account.
+- **Matching source:** clone with `git clone https://github.com/shanselman/sandbox-mcp`,
+  verify the intended tag/commit, then `npm ci --omit=dev` and
   `npm run package:win` on Windows x64 with Node 20+. Prefer the portable artifact so the user needs no Node install.
 
 Do not read credentials or unrelated client configuration. Never add keys, secrets or a transport token.
@@ -73,19 +70,32 @@ if (-not $expected) {
     $checksum = @($release.assets | Where-Object name -eq "$($asset.name).sha256")
     if ($checksum.Count -ne 1) { throw 'No published SHA256; retain the ZIP, do not run it.' }
     $text = (Invoke-WebRequest -UseBasicParsing $checksum[0].browser_download_url).Content
-    if ($text -notmatch '^([a-fA-F0-9]{64})\s+') { throw 'Invalid published checksum.' }
+    if ($text -notmatch '^([a-fA-F0-9]{64})  ([^\r\n]+)\r?\n?$' -or $Matches[2] -ne $asset.name) {
+        throw 'Invalid published checksum filename/format.'
+    }
     $expected = $Matches[1]
 }
 if ((Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash -ne $expected) { throw 'ZIP SHA256 mismatch.' }
 $Install = Join-Path $env:LOCALAPPDATA "sandbox-mcp\releases\$($release.tag_name)"
 if (Test-Path -LiteralPath $Install) { throw "Already installed at $Install; verify/reuse it, do not overwrite." }
 Expand-Archive -LiteralPath $zip -DestinationPath $Install
+$package = Get-Content -LiteralPath (Join-Path $Install 'package.json') -Raw | ConvertFrom-Json
+if ("v$($package.version)" -ne $release.tag_name) { throw 'Release package version mismatch; do not run it.' }
+if ([version]$package.version -ge [version]'1.2.0') {
+    $info = Get-Content -LiteralPath (Join-Path $Install 'BUILD-INFO.txt') -Raw
+    if ($info -notmatch '(?m)^Source commit: ([a-f0-9]{40})\r?$' -or $info -notmatch '(?m)^Build channel: release\r?$') {
+        throw 'Missing release source/channel provenance; do not run it.'
+    }
+    Write-Output $info
+}
 Write-Output "Verified $($release.tag_name) at $Install; SHA256 $expected"
 & (Join-Path $Install 'sbx.cmd') doctor --json
 if ($LASTEXITCODE -notin @(0, 1)) { throw 'doctor failed to return a readiness result.' }
 ```
 
-For a **candidate**, discover the newest successful manual build of the named branch, not `releases/latest`.
+### Optional developer preview (not the normal installation)
+
+For an explicitly requested **developer preview**, discover the newest successful manual build of the named branch, not `releases/latest`.
 If the newest branch commit has no successful build, report that the selected artifact represents an older
 commit; do not promise it contains unbuilt changes. This freezes the selected run and verifies the actual
 ZIP, filename, source commit and channel. Missing/expired artifacts are a visible failure.
@@ -174,6 +184,7 @@ function Merge-SandboxMcpConfig {
     if (@($tokens | Where-Object { $_.Value.StartsWith('//') -or $_.Value.StartsWith('/*') }).Count) {
         throw 'JSONC/comments detected; use the client configuration editor instead.'
     }
+    if (-not $raw.TrimStart().StartsWith('{')) { throw 'Expected a JSON configuration object.' }
     $config = $raw | ConvertFrom-Json
     # Windows PowerShell wraps scalar JSON in PSObject too; require its underlying custom-object type.
     if ($null -eq $config -or $config.GetType() -ne [System.Management.Automation.PSCustomObject]) { throw 'Expected a JSON configuration object.' }
@@ -223,8 +234,8 @@ and an existing `out\report.md`; confirm `wsb list --raw` is empty after **your*
 Do not claim a tool was usable in the user's current session if it needs a reload you cannot perform.
 
 Reports survive under `%LOCALAPPDATA%\sandbox-mcp\runs\<timestamp>\out` (or `SANDBOX_MCP_HOME`).
-Do not automatically install ffmpeg or app runtimes. The candidate additionally supports `record: true`,
-dependency diagnosis and explicit provisioning; the stable 1.1.0 smoke does not prove those additions.
+Do not automatically install ffmpeg or app runtimes. Version 1.2.0 supports `record: true`, dependency diagnosis
+and explicit provisioning; a smoke test against an older version does not prove those additions.
 
 Summarize: exact version/commit, checksum, install path, config destination and backup, first real tool result,
 smoke report/screenshot, remaining readiness/reload steps. Never say an admin/restart step happened unless it did.

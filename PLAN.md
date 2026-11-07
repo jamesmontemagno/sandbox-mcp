@@ -1,8 +1,8 @@
 # sandbox-mcp - architecture and historical spike
 
-## Current implementation (unreleased feature preview)
+## Current implementation (v1.2.0)
 
-The public v1.1.0 release is the portable baseline. This revision additionally integrates coordinated CLI/MCP
+Version 1.2.0 builds on the v1.1.0 portable baseline and integrates coordinated CLI/MCP
 state, encrypted epoch-bound transport, verified incremental deployment, explicit runtime provisioning,
 MSIX/AUMID activation and bounded desktop recording. See [README](README.md) for setup and actual command
 schemas, and the [compatibility matrix](docs/compatibility.md) for measured app builds and limitations.
