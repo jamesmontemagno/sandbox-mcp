@@ -21,7 +21,7 @@ Total time includes boot, copy/install, test and teardown, but not the host buil
 | Native Win32 / NativeWin32 | Dev-signed MSIX, x64 | PASS | 18.0 / 48.2 s | [After test](compatibility/native-msix.png): guest-only public certificate trust, Add-AppxPackage, AUMID activation, same UIA test against the actual app PID. |
 | WinUI 3 / HelloWinUI | .NET 10.0.14 + Windows App SDK 2.6.5 self-contained EXE | PASS | 14.4 / 42.7 s | [After test](compatibility/winui.png): greeting, counter and blank-name fallback through native UIA. |
 | WinUI 3 / HelloWinUI | Same self-contained payload, dev-signed MSIX | PASS | 12.7 / 45.4 s | [After test](compatibility/winui-msix.png): `sandbox_run` over MCP, certificate trust, AUMID activation and the same UIA assertions. |
-| Framework-dependent modern .NET variants | EXE plus explicitly provisioned runtime | Pending provisioning integration | Not measured | Not a pass or a compatibility failure; the clean baseline deliberately does not install these runtimes. |
+| Framework-dependent modern .NET variants of these samples | EXE plus explicitly provisioned runtime | Not measured for these exact variants | Not measured | The clean baseline deliberately does not install these runtimes; separate dependency fixtures were measured below. |
 
 Passing rows have **three screenshots, UIA test exit 0, a live app window and zero matching crash events**.
 The WinUI MSIX row exercised the MCP server end-to-end; the other rows used the CLI.
@@ -29,6 +29,13 @@ The [machine-readable observations](compatibility/results.json) contain exact ti
 test output, package identity when applicable and raw report locations relative to
 `%LOCALAPPDATA%\sandbox-mcp-lanes\anyapp`. Screenshots here are downscaled to at most 600 pixels wide;
 full-size PNGs remain beside each raw report.
+
+Separate dependency fixtures demonstrated the opt-in provisioning flow in fresh network-off guests:
+a framework-dependent .NET 10 WinForms app failed clean, then passed with Microsoft.WindowsDesktop.App
+10.0.14; an MSVC `/MD` console app failed clean with missing VC++ DLLs, then passed with the Microsoft-signed
+VC++ 14.51.36247 runtime. Windows App Runtime 1.8 was also explicitly installed in an existing offline guest;
+package registration reported version 8000.921.1539.0 and persistent provenance marked the machine non-clean.
+These observations establish those fixtures and provisioning paths, not an unmeasured pass for every sample variant.
 
 Build host: Windows build 26340, Node 26.13.0, .NET SDK 10.0.403, Visual Studio x64 C++ tools and winapp CLI 0.7.1.
 These are measured versions, not an exact-SDK requirement for using sandbox-mcp.
