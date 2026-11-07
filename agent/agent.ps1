@@ -281,7 +281,7 @@ if ($Mailbox) {
     # open req-N once seq says it is there. A slow direct probe is the fallback if seq.txt ever lags.
     $inBox = 'C:\sbx\in\mailbox'; $outBox = Join-Path $OutDir 'mailbox'; $seqFile = Join-Path $inBox 'seq.txt'
     New-Item -ItemType Directory -Force $outBox | Out-Null
-    $n = 1; $polls = 0
+    $n = 1; $polls = 0; $missingSince = $null
     function Read-Shared($p) {
         # FileShare.ReadWrite so our constant polling never blocks the host from bumping seq.txt.
         $fs = [IO.File]::Open($p, 'Open', 'Read', 'ReadWrite, Delete')
@@ -297,8 +297,17 @@ if ($Mailbox) {
             $out = Join-Path $outBox ('resp-{0:D6}.json' -f $n)
             [IO.File]::WriteAllText("$out.tmp", $json, (New-Object Text.UTF8Encoding($false)))
             Move-Item -LiteralPath "$out.tmp" -Destination $out -Force
-            $n++; $script:lastActivity = Get-Date
+            $n++; $missingSince = $null; $script:lastActivity = Get-Date
         } else {
+            # A host process may die after reserving a number but before publishing its request.
+            # Wait beyond the share's negative-cache lifetime before skipping a durable gap.
+            if ($avail -gt $n) {
+                if (-not $missingSince) { $missingSince = Get-Date }
+                if (((Get-Date) - $missingSince).TotalSeconds -ge 10) {
+                    $n++; $missingSince = $null
+                    continue
+                }
+            }
             Start-Sleep -Milliseconds 50; Test-Idle
         }
     }

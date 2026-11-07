@@ -44,6 +44,11 @@ no winget. It has Windows PowerShell 5.1 and .NET Framework 4.8. Treat it like a
 
 ## Tips
 
+- CLI and MCP can share one guest. Desktop-changing commands take cooperative turns (four-second idle grace
+  for MCP or `SANDBOX_MCP_WORKFLOW`); observations and `exec` do not reserve the desktop. Use
+  `sandbox_desktop_release` / `sbx desktop-release` when done with a turn. A competing workflow waits up to
+  60 seconds before a clear desktop-busy error. Do not use `exec` to bypass a turn for UI input.
+
 - If a tool says "Windows Sandbox isn't ready on this PC", pass its fix list on to the user (it usually needs an
   admin command and a restart); don't try to work around it. `sbx doctor` re-checks.
 - One sandbox at a time: if `sandbox_start` says one is running, stop it (or ask the user if it isn't ours).

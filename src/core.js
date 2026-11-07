@@ -7,6 +7,7 @@ import net from 'node:net';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { atomicJson, readJson, withStateLock, retryFile, createDesktop } from './coordination.js';
 
 export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 export const VERSION = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version;
@@ -134,18 +135,43 @@ function configXml({ memoryMB, networking = true, vGpu = true }) {
 // ---------- state ----------
 
 let verifiedId = null;
-const readState = () => { try { return JSON.parse(fs.readFileSync(STATE_FILE, 'utf8')); } catch { return null; } };
+const readState = () => readJson(STATE_FILE);
 function writeState(s) {
-  fs.mkdirSync(HOME, { recursive: true });
-  if (s) fs.writeFileSync(STATE_FILE, JSON.stringify(s, null, 2)); else fs.rmSync(STATE_FILE, { force: true });
+  withStateLock(HOME, () => {
+    if (s) atomicJson(STATE_FILE, s); else retryFile(() => fs.rmSync(STATE_FILE, { force: true }));
+  });
 }
+function updateState(target, fn) {
+  return withStateLock(HOME, () => {
+    const s = readState();
+    if (!s || s.id !== target.id) throw new Error('The sandbox was restarted/replaced; start a new one.');
+    const result = fn(s);
+    atomicJson(STATE_FILE, s);
+    return result;
+  });
+}
+function clearState(id) {
+  withStateLock(HOME, () => {
+    if (readState()?.id === id) retryFile(() => fs.rmSync(STATE_FILE, { force: true }));
+  });
+}
+let desktop = createDesktop(HOME, {
+  owner: process.env.SANDBOX_MCP_WORKFLOW,
+  persistent: !!process.env.SANDBOX_MCP_WORKFLOW,
+});
+let shotOwner = process.env.SANDBOX_MCP_WORKFLOW || 'cli';
+export function setDesktopOwner(owner) {
+  desktop = createDesktop(HOME, { owner, persistent: true });
+  shotOwner = owner;
+}
+export function releaseDesktop() { return desktop.release(); }
 
 /** The sandbox started by sandbox-mcp/sbx, or null. Verified against `wsb list` once per id per process. */
 export async function current() {
   const s = readState();
   if (!s) { verifiedId = null; return null; }
   if (s.id !== verifiedId) {
-    if (!(await listSandboxes()).includes(s.id)) { writeState(null); verifiedId = null; return null; }
+    if (!(await listSandboxes()).includes(s.id)) { clearState(s.id); verifiedId = null; return null; }
     verifiedId = s.id;
   }
   return s;
@@ -186,17 +212,18 @@ function agentCall(target, op, params = {}, timeoutMs = 60_000) {
 // Offline transport (Networking disabled): request files in the read-only "in" share, responses in the "out" share.
 // Both sides poll exact file names; direct-path reads through a share are near-instant, directory listings are not.
 async function fileCall(target, op, params, timeoutMs) {
-  const n = String(nextMailboxSeq(target)).padStart(6, '0');
-  const reqFile = path.join(target.runDir, 'in', 'mailbox', `req-${n}.json`);
-  const respFile = path.join(target.runDir, 'out', 'mailbox', `resp-${n}.json`);
-  fs.mkdirSync(path.dirname(reqFile), { recursive: true });
-  fs.writeFileSync(`${reqFile}.tmp`, JSON.stringify({ token: target.token, op, ...params }));
-  fs.renameSync(`${reqFile}.tmp`, reqFile);
-  // Tell the guest it exists (see the mailbox loop in agent.ps1 for why it doesn't just look for the file).
-  const seqFile = path.join(path.dirname(reqFile), 'seq.txt');
-  let seen = 0;
-  try { seen = Number(fs.readFileSync(seqFile, 'utf8')) || 0; } catch { }
-  if (Number(n) > seen) await retryBusy(() => fs.writeFileSync(seqFile, String(Number(n))));
+  const { reqFile, respFile } = updateState(target, (s) => {
+    const n = String((s.mailboxSeq || 0) + 1).padStart(6, '0');
+    // Reserve durably before publishing. A killed writer leaves a gap, never a reused request number.
+    s.mailboxSeq = Number(n);
+    atomicJson(STATE_FILE, s);
+    const reqFile = path.join(target.runDir, 'in', 'mailbox', `req-${n}.json`);
+    const respFile = path.join(target.runDir, 'out', 'mailbox', `resp-${n}.json`);
+    atomicJson(reqFile, { token: target.token, op, ...params });
+    // Publish under the same lock so a later writer cannot move seq.txt backwards.
+    retryFile(() => fs.writeFileSync(path.join(path.dirname(reqFile), 'seq.txt'), String(Number(n))));
+    return { reqFile, respFile };
+  });
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     if (fs.existsSync(respFile)) {
@@ -210,36 +237,20 @@ async function fileCall(target, op, params, timeoutMs) {
   throw Object.assign(new Error(`agent '${op}' timed out after ${timeoutMs}ms`), { code: 'ETIMEDOUT' });
 }
 
-// The guest polls seq.txt through the share, so its read handle can briefly lock the file.
-async function retryBusy(fn, tries = 40) {
-  for (let i = 1; ; i++) {
-    try { return fn(); } catch (e) {
-      if (i >= tries || !['EBUSY', 'EPERM', 'EACCES'].includes(e.code)) throw e;
-      await sleep(25);
-    }
-  }
-}
-
-function nextMailboxSeq(target) {
-  // Sequence is shared by every process talking to this sandbox (CLI and MCP), so keep it in the state file.
-  const s = readState() || target;
-  s.mailboxSeq = (s.mailboxSeq || 0) + 1;
-  if (readState()) writeState(s);
-  target.mailboxSeq = s.mailboxSeq;
-  return s.mailboxSeq;
-}
-
 async function call(op, params = {}, timeoutMs = 60_000) {
   const s = await requireSandbox();
   const t = Date.now();
   try {
-    const r = await agentCall(s, op, params, timeoutMs);
+    const mutates = ['launch', 'click', 'keys', 'uiaction'].includes(op) ||
+      (op === 'screenshot' && (params.windowTitle || params.pid));
+    const invoke = () => agentCall(s, op, params, timeoutMs);
+    const r = await (mutates ? desktop.run(invoke) : invoke());
     audit(s, { op, params: brief(params), ms: Date.now() - t, ok: true });
     return r;
   } catch (e) {
     audit(s, { op, params: brief(params), ms: Date.now() - t, ok: false, error: e.message });
     if (e.code && !(await listSandboxes()).includes(s.id)) {
-      writeState(null); verifiedId = null;
+      clearState(s.id); verifiedId = null;
       throw new Error('The sandbox is no longer running (closed, crashed, or stopped by its idle timeout). Start a new one.');
     }
     throw e;
@@ -345,7 +356,7 @@ export async function startSandbox({ network = 'on', internet, memoryMB, window 
     audit(target, { op: 'start', network, memoryMB, bootSeconds, ok: true });
     return { id, ip: target.ip, network, runDir, outDir: path.join(runDir, 'out'), user: hello.user, bootSeconds, steps };
   } catch (e) {
-    writeState(null); verifiedId = null;
+    clearState(id); verifiedId = null;
     await wsb(['stop', '--id', id]).catch(() => {});
     throw new Error(`${e.message}\nSteps:\n${steps.join('\n')}`);
   }
@@ -372,14 +383,14 @@ export async function stopSandbox({ force = false } = {}) {
       ? fs.readdirSync(outDir, { recursive: true }).filter((f) => !f.endsWith('.preview.png') && !f.startsWith('mailbox'))
       : [];
   }
-  writeState(null); verifiedId = null;
+  if (mine) clearState(mine.id); verifiedId = null;
   return result;
 }
 
 /** Fire-and-forget stop that survives this process being killed (used when an MCP client disconnects). */
 export function stopDetached(id) {
   spawn('wsb.exe', ['stop', '--id', id], { detached: true, stdio: 'ignore', windowsHide: true }).unref();
-  if (readState()?.id === id) writeState(null);
+  clearState(id);
   verifiedId = null;
 }
 
@@ -408,9 +419,8 @@ export async function copyIn(hostPath, sandboxPath) {
   if (!fs.existsSync(src)) throw new Error(`Host path not found: ${src}`);
   checkAllowed(src);
   const base = path.basename(src);
-  const st = readState() || s;
-  st.seq = (st.seq || 0) + 1; writeState(st);
-  const stage = `${st.seq}-${base}`; // fresh folder each time avoids the guest's stale directory cache
+  const seq = updateState(s, (st) => ++st.seq);
+  const stage = `${seq}-${base}`; // fresh folder each time avoids the guest's stale directory cache
   fs.cpSync(src, path.join(s.runDir, 'in', stage), { recursive: true });
   return call('copy', { from: `${GUEST.in}\\${stage}`, to: sandboxPath || `C:\\apps\\${base}` }, 600_000);
 }
@@ -441,8 +451,10 @@ export async function screenshot({ windowTitle, pid, name, maxWidth } = {}) {
   const previewPath = path.join(dir, r.preview);
   const preview = await waitFor(() => fs.existsSync(previewPath) && fs.readFileSync(previewPath), 10_000, 'screenshot file');
   fs.rmSync(previewPath, { force: true });
-  const st = readState() || s;
-  st.lastShot = { scale: r.scale, left: r.left, top: r.top }; writeState(st);
+  updateState(s, (st) => {
+    st.lastShot = { scale: r.scale, left: r.left, top: r.top };
+    (st.lastShots ||= {})[shotOwner] = st.lastShot;
+  });
   return { path: path.join(dir, r.file), width: r.width, height: r.height, left: r.left, top: r.top,
     previewBase64: preview.toString('base64'), previewWidth: r.previewWidth, previewHeight: r.previewHeight };
 }
@@ -451,7 +463,7 @@ export async function screenshot({ windowTitle, pid, name, maxWidth } = {}) {
 export async function click({ x, y, button, double, coordinates = 'screen' }) {
   let sx = x, sy = y;
   if (coordinates === 'screenshot') {
-    const shot = (await requireSandbox()).lastShot;
+    const shot = (await requireSandbox()).lastShots?.[shotOwner];
     if (!shot) throw new Error('Take a screenshot first, or use screen coordinates.');
     sx = Math.round(shot.left + x / shot.scale);
     sy = Math.round(shot.top + y / shot.scale);

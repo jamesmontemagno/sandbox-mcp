@@ -21,6 +21,7 @@ const network = z.enum(['on', 'firewall', 'off']).optional().describe(
 
 // The sandbox this server process started, stopped automatically when the MCP client goes away.
 let startedId = null;
+sbx.setDesktopOwner(process.env.SANDBOX_MCP_WORKFLOW || `mcp:${process.pid}`);
 const server = new McpServer({ name: 'sandbox-mcp', version: sbx.VERSION });
 
 server.registerTool('sandbox_start', {
@@ -56,6 +57,12 @@ server.registerTool('sandbox_stop', {
   startedId = null;
   return text(r);
 }));
+
+server.registerTool('sandbox_desktop_release', {
+  title: 'Release sandbox desktop',
+  description: 'End this workflow desktop turn immediately instead of waiting for its four-second idle grace.',
+  inputSchema: {},
+}, tool(async () => text(sbx.releaseDesktop())));
 
 server.registerTool('sandbox_copy_in', {
   title: 'Copy into sandbox',

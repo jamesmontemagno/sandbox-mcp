@@ -234,6 +234,7 @@ teaches agents the workflow; copy it into your agent's skills folder (for exampl
 | `sandbox_run` | The whole loop in one call: boot, copy in, launch or run, observe, test script, collect, destroy, report. |
 | `sandbox_start` | Boot a fresh sandbox (`network`: on / firewall / off, `memoryMB`, `vGpu`). Waits until the guest agent answers. |
 | `sandbox_status` | Is one running, its id/IP/network mode, is the agent healthy. |
+| `sandbox_desktop_release` | End this workflow's desktop turn immediately. |
 | `sandbox_stop` | Destroy it. Lists the artifacts left on the host. |
 | `sandbox_copy_in` | Copy a host file or folder in (default `C:\apps\<name>`). |
 | `sandbox_copy_out` | Copy a sandbox file or folder out to the run's `out\files`. |
@@ -275,6 +276,14 @@ sbx mcp                                      # run the MCP server
 
 Add `--json` to any command for machine-readable output. `sbx exec` and `sbx run` exit with meaningful codes, so they
 drop straight into scripts. `sbx help` has the details.
+
+CLI and MCP processes share locked, atomically written state, including copy and mailbox sequence numbers.
+Desktop-changing operations (launch, click, type, UI actions and window-focusing screenshots) take cooperative
+FIFO turns; observing windows, UI trees, processes, status and executing commands does not reserve the desktop.
+An MCP instance retains its turn for four idle seconds. Set `SANDBOX_MCP_WORKFLOW` to the same identifier across
+CLI commands to retain a multi-command turn too; anonymous CLI commands release immediately. End a turn with
+`sbx desktop-release` or `sandbox_desktop_release`. A contender waits at most 60 seconds, then reports
+`desktop busy: held by <owner>`. These are cooperative turns, not isolation: `exec` can itself start GUI programs.
 
 ## Test scripts
 

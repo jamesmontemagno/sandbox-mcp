@@ -50,6 +50,7 @@ One shot
 Step by step
   start [--network on|firewall|off] [--offline] [--memory <MB>] [--no-gpu] [--minimized]
   status
+  desktop-release                    Release this workflow's desktop turn (SANDBOX_MCP_WORKFLOW)
   push <host path> [sandbox path]    Copy a file/folder in (default C:\\apps\\<name>)
   pull <sandbox path> [name]         Copy a file/folder out to the run's out\\files folder
   exec [--cmd] [--cwd <dir>] [--timeout <sec>] <command...>
@@ -172,6 +173,10 @@ async function main(argv) {
       out(opt, await sbx.status(), (s) => s.running
         ? `Running: ${s.id} (network ${s.network}, since ${s.startedAt}, agent ${s.agent})\nArtifacts: ${s.outDir}`
         : `No sbx sandbox running.${s.otherSandboxes.length ? ` Other sandbox(es): ${s.otherSandboxes.join(', ')}` : ''}`);
+      return 0;
+
+    case 'desktop-release':
+      out(opt, sbx.releaseDesktop());
       return 0;
 
     case 'stop':
