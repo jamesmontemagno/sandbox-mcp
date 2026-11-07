@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { protocolProof } from './protocol-proof.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const runtimeRoot = process.env.SANDBOX_MCP_TEST_ROOT ? path.resolve(process.env.SANDBOX_MCP_TEST_ROOT) : root;
@@ -31,6 +32,7 @@ async function cli(...args) {
 const client = new Client({ name: 'integration-proof', version: '1.0.0' });
 let connected = false;
 let ownedId;
+let ownedEpoch;
 async function call(name, args = {}) {
   const result = await client.callTool({ name, arguments: args }, undefined, { timeout: 180_000 });
   const text = result.content.filter((part) => part.type === 'text').map((part) => part.text).join('\n');
@@ -62,11 +64,17 @@ try {
     ? await cli('start', '--network', network, '--minimized')
     : await json('sandbox_start', { network, window: 'minimized' });
   ownedId = boot.id;
+  ownedEpoch = boot.epoch;
   evidence.runDir = boot.runDir;
   record('fresh guest started', { id: boot.id, bootSeconds: boot.bootSeconds, runDir: boot.runDir });
   assert.equal((await json('sandbox_status')).id, ownedId);
   assert.equal((await cli('status')).id, ownedId);
   record('CLI and MCP share one guest');
+  const target = JSON.parse(fs.readFileSync(path.join(process.env.SANDBOX_MCP_HOME, 'current.json'), 'utf8'));
+  assert.ok(target.epoch && target.identity.agentSha256);
+  assert.equal(target.identity.protocolVersion, 2);
+  await protocolProof(target);
+  record('encrypted transport identity, tamper, replay, stale epoch and version rejection', target.identity);
   if (network === 'off') {
     const adapters = await call('sandbox_exec', { command: '@(Get-NetAdapter -ErrorAction SilentlyContinue).Count' });
     assert.match(adapters.text.trim(), /--- stdout ---\r?\n0$/);
@@ -127,6 +135,7 @@ try {
     if (ownedId) {
       const state = await cli('status');
       assert.equal(state.id, ownedId, 'Refusing to stop a guest not started by this test.');
+      assert.equal(state.epoch, ownedEpoch, 'Refusing to stop a replacement boot.');
       const stopped = await cli('stop');
       assert.ok(stopped.stopped.includes(ownedId));
       const { stdout } = await execute('wsb.exe', ['list', '--raw'], { timeout: 30_000 });
