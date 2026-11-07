@@ -9,21 +9,22 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const runtimeRoot = process.env.SANDBOX_MCP_TEST_ROOT ? path.resolve(process.env.SANDBOX_MCP_TEST_ROOT) : root;
 const execute = promisify(execFile);
 const network = process.argv[2] || 'off';
 assert.ok(['off', 'on'].includes(network), 'Usage: node test/integration.js [off|on]');
 assert.ok(process.env.SANDBOX_MCP_HOME, 'Set a lane-specific SANDBOX_MCP_HOME before running.');
 const evidenceDir = path.join(process.env.SANDBOX_MCP_HOME, 'integration');
 fs.mkdirSync(evidenceDir, { recursive: true });
-const evidence = { network, startedAt: new Date().toISOString(), checks: [] };
+const evidence = { network, runtimeRoot, runtime: process.execPath, startedAt: new Date().toISOString(), checks: [] };
 const record = (name, detail) => {
   evidence.checks.push({ name, detail });
   console.log(`ok ${name}${detail ? `: ${JSON.stringify(detail)}` : ''}`);
 };
 const save = () => fs.writeFileSync(path.join(evidenceDir, `${network}.json`), JSON.stringify(evidence, null, 2));
 async function cli(...args) {
-  const { stdout } = await execute(process.execPath, [path.join(root, 'src', 'cli.js'), ...args, '--json'], {
-    cwd: root, timeout: 240_000, maxBuffer: 8 * 1024 * 1024, windowsHide: true,
+  const { stdout } = await execute(process.execPath, [path.join(runtimeRoot, 'src', 'cli.js'), ...args, '--json'], {
+    cwd: runtimeRoot, timeout: 600_000, maxBuffer: 8 * 1024 * 1024, windowsHide: true,
   });
   return JSON.parse(stdout);
 }
@@ -39,11 +40,20 @@ async function call(name, args = {}) {
 const json = async (name, args) => JSON.parse((await call(name, args)).text);
 
 try {
-  evidence.sha = (await execute('git', ['rev-parse', 'HEAD'], { cwd: root })).stdout.trim();
+  evidence.sha = process.env.SANDBOX_MCP_TEST_SHA || (await execute('git', ['rev-parse', 'HEAD'], { cwd: root })).stdout.trim();
+  if (process.env.SANDBOX_MCP_EXPECT_NO_HOST_NODE === '1') {
+    const lookup = await execute('where.exe', ['node'], { timeout: 10_000 }).then(
+      (result) => ({ code: 0, stdout: result.stdout }),
+      (error) => ({ code: error.code, stdout: error.stdout }),
+    );
+    assert.equal(lookup.code, 1, `Host Node is visible on PATH: ${lookup.stdout}`);
+    assert.equal(path.resolve(process.execPath), path.join(runtimeRoot, 'node.exe'));
+    record('bundled runtime with host Node absent from PATH');
+  }
   await execute('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File',
     path.join(root, 'samples', 'HelloSandbox', 'build.ps1')], { cwd: root, timeout: 60_000 });
   await client.connect(new StdioClientTransport({
-    command: process.execPath, args: [path.join(root, 'src', 'server.js')], stderr: 'inherit', env: { ...process.env },
+    command: process.execPath, args: [path.join(runtimeRoot, 'src', 'server.js')], stderr: 'inherit', env: { ...process.env },
   }));
   connected = true;
   const tools = (await client.listTools()).tools;
