@@ -132,7 +132,7 @@ async function resolveInstaller(item) {
     return selectDotnetFile(await response.json(), item);
   }
   if (item.component === 'VC++ redistributable') return { ...item,
-    url: `https://aka.ms/vs/17/release/vc_redist.${item.architecture}.exe`, args: '/install /quiet /norestart' };
+    url: `https://aka.ms/vc14/vc_redist.${item.architecture}.exe`, args: '/install /quiet /norestart' };
   if (item.component === 'Windows App Runtime') {
     if (!/^\d+\.\d+$/.test(item.version)) throw new Error('Windows App Runtime requires a major.minor release channel');
     return { ...item, url: `https://aka.ms/windowsappsdk/${item.version}/latest/windowsappruntimeinstall-${item.architecture}.exe`, args: '--quiet' };

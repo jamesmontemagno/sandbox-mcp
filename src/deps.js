@@ -113,7 +113,7 @@ export function scanDependencies(input) {
           [path.dirname(file), root].includes(path.dirname(p)));
         requirement('VC++ redistributable', local ? 'app-local' : 'missing', `${relative} imports ${dll}`,
           local ? 'Verify the app-local DLL and its transitive dependencies match the app architecture.' :
-            `Install the official Microsoft Visual C++ 2015-2022 ${pe.architecture} redistributable, or ship its permitted runtime DLLs app-local.`,
+            `Install the latest official Microsoft Visual C++ v14 ${pe.architecture} redistributable (at least as recent as the app's build tools), or ship its permitted runtime DLLs app-local.`,
           { architecture: pe.architecture });
       }
       if (pe.imports.includes('microsoft.windowsappruntime.bootstrap.dll') || /Microsoft\.WindowsAppRuntime\.Bootstrap\.dll$/i.test(file)) {
