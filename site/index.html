@@ -26,7 +26,7 @@
     <a class="brand" href="#top"><img src="assets/favicon.svg" alt="" width="28" height="28"> sandbox-mcp</a>
     <nav aria-label="Main">
       <a href="#what">What it does</a>
-      <a href="#measured">Measured</a>
+      <a href="#compatibility">Compatibility</a>
       <a href="#why">Why</a>
       <a href="#how">How it works</a>
       <a href="https://github.com/shanselman/sandbox-mcp">GitHub</a>
@@ -46,7 +46,7 @@
       <a class="btn btn-ghost" href="#what">See what it finds</a>
     </div>
 
-    <figure class="stage" id="stage" aria-label="A measured run failing on a clean machine, and passing after an explicit runtime install">
+    <div class="stage" id="stage">
       <div class="term">
         <div class="term-bar"><i></i><i></i><i></i><span>PowerShell</span><button class="replay" type="button" id="replay" hidden>Replay</button></div>
 <pre class="term-body" id="term" tabindex="0"><code><span class="cmd l">&gt; sbx run .\NativeProof.exe --network off</span>
@@ -62,20 +62,7 @@
 <span class="l dim">  process  exited with code 0</span></code></pre>
       </div>
 
-      <div class="machine" id="machine">
-        <div class="machine-head">
-          <span>Inside the sandbox</span>
-          <strong>A real app, then a deleted PC</strong>
-        </div>
-        <div class="machine-view">
-          <picture>
-            <source srcset="assets/haptics-teaser.png" media="(prefers-reduced-motion: reduce)">
-            <img src="assets/sandbox-teaser.gif" width="800" height="522" alt="UI Automation drives Haptics Everywhere in a network-off Sandbox, switching it from light to dark. The app exits and the guest is destroyed.">
-          </picture>
-        </div>
-      </div>
-      <figcaption>Output from <a href="https://github.com/shanselman/sandbox-mcp/blob/main/docs/compatibility.md#combined-feature-verification">measured runs</a>; guest networking stayed off and the Microsoft-signed installer was verified on the host. The footage is a real, edited clip of Haptics Everywhere: its boot and teardown title cards summarize actual logs.</figcaption>
-    </figure>
+    </div>
 
     <dl class="facts">
       <div><dt>~15 s</dt><dd>to boot a clean Windows</dd></div>
@@ -216,16 +203,10 @@ suspicious.ps1: 3 red flag(s) (watched 40s, network firewall)
   </div>
 </section>
 
-<section class="paper" id="measured">
+<section class="paper" id="compatibility">
   <div class="wrap">
-    <p class="eyebrow">Measured, not promised</p>
-    <h2>Real apps, in fresh guests, with no network.</h2>
-    <p class="section-lede">Each run had its own fresh guest, a UI Automation test and screenshots, with no SDK or shared runtime installed. Totals include boot, install, test and teardown.</p>
-    <div class="shots">
-      <figure><img src="assets/compat-winui.png" width="600" height="465" loading="lazy" alt="Hello WinUI sample showing Hello, Sandbox! and Count: 2 after its test."><figcaption>WinUI 3, after its test</figcaption></figure>
-      <figure><img src="assets/compat-wpf.png" width="600" height="300" loading="lazy" alt="WPF sample after its test clicked Greet."><figcaption>WPF, after its test</figcaption></figure>
-      <figure><img src="assets/compat-native.png" width="600" height="300" loading="lazy" alt="Native Win32 sample showing Hello from native Win32."><figcaption>Native Win32, after its test</figcaption></figure>
-    </div>
+    <p class="eyebrow">Compatibility results</p>
+    <h2>App types and packaging tested in Windows Sandbox.</h2>
     <div class="table-scroll" tabindex="0" role="region" aria-label="Measured compatibility results">
       <table class="measured">
         <thead><tr><th scope="col">App type</th><th scope="col">Packaging</th><th scope="col">Result</th><th scope="col">Boot / total</th></tr></thead>
@@ -430,7 +411,7 @@ sbx doctor</code></pre><button class="copy" type="button">Copy</button></div>
     <ul class="limits">
       <li><strong>One sandbox at a time.</strong> That&rsquo;s a Windows Sandbox rule. Runs fail fast rather than queue.</li>
       <li><strong>Windows x64 hosts only.</strong> It needs a logged-in session, so hosted CI runners can&rsquo;t boot one.</li>
-      <li><strong>Not every Windows app.</strong> Hardware-dependent work may not run in Sandbox. Check what&rsquo;s been <a href="#measured">measured</a>.</li>
+      <li><strong>Not every Windows app.</strong> Hardware-dependent work may not run in Sandbox. Check the <a href="#compatibility">compatibility results</a>.</li>
       <li><strong>Prerequisites are never installed for you.</strong> Bundle them, or opt in on each fresh guest and get a run labeled as not clean.</li>
       <li><strong>Installer tests take a couple of minutes.</strong> Each system snapshot takes 10-20 s.</li>
     </ul>

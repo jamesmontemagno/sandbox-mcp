@@ -36,6 +36,15 @@ test('site positions the CLI as standalone and MCP as optional', () => {
   assert.match(html, /no Node\.js install, MCP setup or PATH changes/i);
 });
 
+test('site removes screenshot galleries and keeps compatibility timings and CLI examples', () => {
+  assert.doesNotMatch(html, /Measured, not promised|id="measured"|#measured/i);
+  assert.doesNotMatch(html, /assets\/(?:compat-(?:native|wpf|winui)\.png|sandbox-teaser\.gif|haptics-teaser\.png)/i);
+  assert.match(html, /id="compatibility"/);
+  assert.match(html, /App type<\/th><th scope="col">Packaging<\/th>/);
+  assert.equal((html.match(/class="yes">PASS<\/td><td>\d+\.\d+ \/ \d+\.\d+ s/g) ?? []).length, 7);
+  assert.match(html, /sbx run \.\\samples\\HelloSandbox\\bin/);
+});
+
 test('the site only names real MCP tools and states the right tool count', () => {
   const named = [...html.matchAll(/\bsandbox_[a-z]\w*/g)].map((m) => m[0]);
   assert.deepEqual(named.filter((t) => !serverTools.includes(t)), []);
