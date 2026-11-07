@@ -1,13 +1,15 @@
 ---
 name: windows-sandbox-detonate
-description: See what an untrusted file or script does by running it in an isolated, throwaway Windows Sandbox with no network. Use when asked whether a file is safe, what a suspicious exe, script, msi or attachment does, or what processes, persistence and network activity it causes.
+description: See what an untrusted file or script does by running it in an isolated, throwaway Windows Sandbox with no network, using sbx or the optional MCP adapter. Use when asked what a suspicious exe, script, msi or attachment does, or what processes, persistence and network activity it causes.
 ---
 
 # Find out what a file does
 
+If shell access is available, use the `sbx` CLI; the optional MCP adapter uses the same engine and is not required.
+
 If a tool says the sandbox isn't ready, follow the windows-sandbox-setup skill.
 
-Call `sandbox_detonate` with `file` set to a host path. CLI equivalent: `sbx detonate <file>`. It runs the file the way a double-click would, with Windows auditing on, then destroys the sandbox. Supported types are `.exe`, `.msi`, `.ps1`, `.cmd`, `.bat`, `.js`, `.jse`, `.vbs`, `.vbe`, `.wsf` and `.hta`.
+Run `sbx detonate <file>` or call `sandbox_detonate` with `file` set to a host path. Both run the file the way a double-click would, with Windows auditing on, then destroy the sandbox. Supported types are `.exe`, `.msi`, `.ps1`, `.cmd`, `.bat`, `.js`, `.jse`, `.vbs`, `.vbe`, `.wsf` and `.hta`.
 
 **Never run a suspect file any other way.** Don't use `sandbox_run`, or anything on the host, to "just try it".
 

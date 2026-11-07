@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>sandbox-mcp: give your AI agent a brand-new Windows PC, then throw it away</title>
-  <meta name="description" content="Give your AI agent a real, disposable Windows 11. Boot it, deploy your app, drive the controls, catch the crash, keep the evidence and delete the PC. An MCP server and CLI for Windows Sandbox.">
+  <meta name="description" content="Use the standalone sbx CLI or optional MCP adapter to test Windows apps in a real, disposable Windows 11 Sandbox.">
   <link rel="canonical" href="https://shanselman.github.io/sandbox-mcp/">
   <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
   <meta name="theme-color" content="#0b1018">
@@ -40,7 +40,7 @@
   <div class="wrap">
     <p class="eyebrow">Give your AI agent a brand-new Windows PC</p>
     <h1>&ldquo;Works on my machine&rdquo; <span>isn&rsquo;t a test.</span></h1>
-    <p class="lede">A real, disposable Windows 11: boot it, deploy your app, drive the controls, catch the crash, keep the evidence, delete the PC. One MCP tool call or <code>sbx run</code>, in roughly 40-50 seconds.</p>
+    <p class="lede">A real, disposable Windows 11: boot it, deploy your app, drive the controls, catch the crash, keep the evidence, delete the PC. Run it directly with <code>sbx</code>; the optional MCP adapter adds discoverable tools and inline images. Both use the same engine.</p>
     <div class="cta">
       <a class="btn" href="#get">Get sandbox-mcp</a>
       <a class="btn btn-ghost" href="#what">See what it finds</a>
@@ -80,7 +80,7 @@
     <dl class="facts">
       <div><dt>~15 s</dt><dd>to boot a clean Windows</dd></div>
       <div><dt>0</dt><dd>images to build or download</dd></div>
-      <div><dt data-tool-count>27</dt><dd>MCP tools, plus the <code>sbx</code> CLI</dd></div>
+      <div><dt data-tool-count>27</dt><dd>optional MCP tools; full <code>sbx</code> CLI</dd></div>
       <div><dt>Free</dt><dd>with Windows Pro, Enterprise or Education</dd></div>
     </dl>
   </div>
@@ -92,7 +92,7 @@
       <p class="eyebrow">The problem</p>
       <h2>Your PC is the worst place to test your app.</h2>
       <p>It has every runtime, SDK, redistributable, font, registry key and PATH entry you ever installed. Your users&rsquo; PCs don&rsquo;t. So the missing VC++ runtime you forgot to bundle never shows up until a customer finds it.</p>
-      <p>Windows Sandbox is the perfect brand-new customer PC: pristine, and deleted when it closes. <strong>sandbox-mcp adds what it&rsquo;s missing:</strong> app deployment, UI Automation, clean-machine checks and test evidence that outlives the machine.</p>
+      <p>Windows Sandbox is the perfect brand-new customer PC: pristine, and deleted when it closes. <strong>The shared sandbox-mcp engine adds what it&rsquo;s missing:</strong> app deployment, UI Automation, clean-machine checks and test evidence that outlives the machine.</p>
     </div>
     <div class="versus">
       <div class="vs-col">
@@ -339,11 +339,11 @@ suspicious.ps1: 3 red flag(s) (watched 40s, network firewall)
       </li>
       <li>
         <h3>Pick how you want it</h3>
-        <p>They all run the same MCP server.</p>
+        <p>The standalone CLI and optional MCP adapter use the same engine. Use the CLI from a shell; add MCP when your agent benefits from tool discovery and structured results.</p>
         <ul class="picks">
           <li><strong>Agent setup</strong> to have your agent do it all</li>
           <li><strong>Agent plugin</strong> for the server and skills in one install</li>
-          <li><strong>Portable ZIP</strong> to try it with nothing installed</li>
+          <li><strong>Portable ZIP</strong> to use the CLI alone, with no Node.js or MCP setup</li>
           <li><strong>From source</strong> to hack on it</li>
         </ul>
       </li>
@@ -360,21 +360,21 @@ suspicious.ps1: 3 red flag(s) (watched 40s, network firewall)
       <div class="panel" role="tabpanel" id="p-setup" aria-labelledby="t-setup">
         <div class="panel-copy">
           <h3>Let your agent set it up.</h3>
-          <p>It checks the PC, verifies the download, preserves your MCP configuration and asks before admin changes or a restart. No Node.js install needed.</p>
+          <p>It checks the PC and verifies the download. The CLI needs no MCP configuration; if you choose MCP, it preserves existing configuration and asks before admin changes or a restart. No Node.js install needed.</p>
           <p><a href="https://github.com/shanselman/sandbox-mcp/blob/main/docs/agent-setup.md">Read the setup guide</a></p>
         </div>
         <div class="panel-code">
           <p class="code-label">Give this to your agent</p>
-          <div class="code"><pre tabindex="0"><code>Set up Windows Sandbox MCP by following:
+          <div class="code"><pre tabindex="0"><code>          Set up the sandbox-mcp CLI by following:
 https://raw.githubusercontent.com/shanselman/sandbox-mcp/main/docs/agent-setup.md
-Install the latest verified release; ask before admin changes or a restart.</code></pre><button class="copy" type="button">Copy</button></div>
+          Install the latest verified release. The CLI must work without MCP; configure the optional MCP adapter only if my agent needs it. Ask before admin changes or a restart.</code></pre><button class="copy" type="button">Copy</button></div>
         </div>
       </div>
 
       <div class="panel" role="tabpanel" id="p-plugin" aria-labelledby="t-plugin" hidden>
         <div class="panel-copy">
-          <h3>For agents. The MCP server and five skills in one install.</h3>
-          <p>No cloning and no MCP config to edit. Needs Node.js 20 or later.</p>
+          <h3>Optional MCP adapter and five skills for agents.</h3>
+          <p>No cloning or MCP config to edit. Needs Node.js 20 or later. The standalone CLI does not require this plugin.</p>
           <p>In VS Code, add <code>shanselman/sandbox-mcp</code> as a marketplace in <strong>Chat: Open Customizations</strong>, or run <strong>Chat: Install Plugin from Source</strong>.</p>
           <p><a href="https://github.com/shanselman/sandbox-mcp/blob/main/docs/agent-plugin.md">Read the plugin guide</a></p>
         </div>
@@ -389,8 +389,8 @@ copilot plugin install sandbox-mcp@sandbox-mcp</code></pre><button class="copy" 
 
       <div class="panel" role="tabpanel" id="p-zip" aria-labelledby="t-zip" hidden>
         <div class="panel-copy">
-          <h3>For trying it now. No Node.js install, no PATH changes.</h3>
-          <p>A Windows x64 ZIP with a published SHA256, containing <code>sbx</code>, the MCP server, the skills and a private Node.js runtime. Extract it and run.</p>
+          <h3>For the CLI. No Node.js install, MCP setup or PATH changes.</h3>
+          <p>A Windows x64 ZIP with a published SHA256, containing <code>sbx</code>, the optional MCP adapter, the skills and a private Node.js runtime. Extract it and run the CLI directly.</p>
           <p><a class="btn" href="https://github.com/shanselman/sandbox-mcp/releases/latest">Download the latest release</a></p>
         </div>
         <div class="panel-code">

@@ -1,6 +1,6 @@
 ---
 name: windows-sandbox-app-test
-description: Check that a Windows desktop or console app, or an MSIX package, runs on a fresh, throwaway Windows machine (Windows Sandbox) in one call, with dependency diagnosis, a screenshot, crash check, optional test script and report. Use when asked to "try my build on a clean machine", check that an exe runs without the dev box's installed runtimes, find which runtimes an app needs, smoke-test a build, or reproduce "works on my machine" bugs.
+description: Check that a Windows desktop or console app, or an MSIX package, runs on a fresh, throwaway Windows machine (Windows Sandbox) in one call, with dependency diagnosis, a screenshot, crash check, optional test script and report. Use when asked to "try my build on a clean machine", check that an exe runs without the dev box's installed runtimes, find which runtimes an app needs, smoke-test a build, or reproduce "works on my machine" bugs, using sbx or the optional MCP adapter.
 ---
 
 # Test an app on a clean machine
@@ -8,6 +8,8 @@ description: Check that a Windows desktop or console app, or an MSIX package, ru
 This skill documents v1.2.0. Older ZIPs don't contain every tool below.
 
 Windows Sandbox is a clean Windows 11 VM that boots in about 15-20 s and is **destroyed on stop**. Only **one** can run at a time. Nothing from the host is installed in it: no dev tools, no Store apps (no Notepad, Calculator, Terminal) and no winget. It has Windows PowerShell 5.1 and .NET Framework 4.8. Treat it like a brand-new customer PC.
+
+If shell access is available, use the `sbx` CLI; the optional MCP adapter uses the same engine and is not required.
 
 Use a different skill for other jobs:
 
@@ -18,11 +20,11 @@ Use a different skill for other jobs:
 
 ## 1. Diagnose dependencies first
 
-Call `sandbox_deps` with `path` (CLI: `sbx deps <path>`). It's a host-only static scan that doesn't boot a sandbox, run the app or install anything. Its output includes the scan's limits and any uncertain optional components, so report those too.
+Run `sbx deps <path>` or call `sandbox_deps` with `path`. It's a host-only static scan that doesn't boot a sandbox, run the app or install anything. Its output includes the scan's limits and any uncertain optional components, so report those too.
 
 ## 2. Run it
 
-Call `sandbox_run` with `app` set to a host path. CLI equivalent: `sbx run <app.exe|folder>`. One call boots the sandbox, copies the app in, runs it, screenshots it, checks the event log for crashes, runs an optional test script, copies files out, destroys the sandbox and writes `report.md`. Measured GUI samples take roughly 40-50 s.
+Run `sbx run <app.exe|folder>` or call `sandbox_run` with `app` set to a host path. Both use the same workflow: boot the sandbox, copy the app in, run it, capture a screenshot, check the event log for crashes, optionally run a test script, copy files out, destroy the sandbox and write `report.md`. The MCP adapter can return the screenshot inline; the CLI writes it to the report folder. Measured GUI samples take roughly 40-50 s.
 
 - **`app`** is an `.exe` (its whole folder is copied), a folder, or a package. Pass `exe` if a folder has more than one `.exe`.
 - **`console: true`** is for console apps. It runs to completion and captures stdout. Without it, the app is launched as a GUI app and given `waitSec` (default 5) to settle.

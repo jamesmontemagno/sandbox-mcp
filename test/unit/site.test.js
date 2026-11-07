@@ -29,6 +29,13 @@ test('install commands match the plugin and marketplace names', () => {
   assert.ok(html.includes('copilot plugin marketplace add shanselman/sandbox-mcp'));
 });
 
+test('site positions the CLI as standalone and MCP as optional', () => {
+  assert.match(html, /optional MCP adapter/i);
+  assert.match(html, /same engine/i);
+  assert.match(html, /CLI does not require this plugin/i);
+  assert.match(html, /no Node\.js install, MCP setup or PATH changes/i);
+});
+
 test('the site only names real MCP tools and states the right tool count', () => {
   const named = [...html.matchAll(/\bsandbox_[a-z]\w*/g)].map((m) => m[0]);
   assert.deepEqual(named.filter((t) => !serverTools.includes(t)), []);

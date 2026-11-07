@@ -1,16 +1,18 @@
 # sandbox-mcp Agent Plugin
 
 A portable [Agent Plugin](https://agent-plugins.org/) (spec 1.0.0) that gives AI agents fresh, throwaway Windows machines for testing apps.
+It packages skills and an optional MCP adapter around the same engine as the standalone `sbx` CLI. Shell-capable
+agents can use `sbx` without installing the plugin, starting an MCP server or editing MCP configuration.
 
 | Component | What it adds |
 |---|---|
-| `mcp.json` | The `windows-sandbox` stdio MCP server, launched with `cmd /d /c npx --yes github:shanselman/sandbox-mcp#v<version>` |
+| `mcp.json` | Optional `windows-sandbox` stdio MCP adapter, launched with `cmd /d /c npx --yes github:shanselman/sandbox-mcp#v<version>` |
 | `skills/` | `windows-sandbox-setup`, `windows-sandbox-app-test`, `windows-sandbox-interactive`, `windows-sandbox-installer-test`, `windows-sandbox-detonate` |
 
 ## Before you install
 
 1. Use Windows 11 24H2 or later, Pro, Enterprise or Education. The plugin doesn't work on other systems, because the server needs Windows Sandbox on the PC running the agent.
-2. Install [Node.js 20 or later](https://nodejs.org/) with `winget install OpenJS.NodeJS.LTS --source winget`. Unlike the portable ZIP, the plugin uses your installed Node.js and npm. If you don't want to install Node.js, use the [agent setup guide](agent-setup.md) instead.
+2. Node.js 20 or later is needed for this plugin's MCP adapter (`winget install OpenJS.NodeJS.LTS --source winget`). This is not a requirement for using the CLI from the [portable ZIP](../README.md#download-and-try-it-no-nodejs-install), which includes its own Node.js runtime and needs no MCP configuration.
 3. Turn on Windows Sandbox if you haven't. [Turn on Windows Sandbox](../README.md#turn-on-windows-sandbox) covers the steps.
 
 To check your PC, run the read-only readiness check:
@@ -63,7 +65,9 @@ Confirm `sandbox-mcp` is enabled in **Chat: Open Customizations** > **Plugins**,
 
 ### Other clients
 
-For another Agent Plugins-compatible client, use that client's plugin install flow. If your agent doesn't support plugins, use the [manual MCP setup](../README.md#use-it-from-an-agent-mcp).
+For another Agent Plugins-compatible client, use that client's plugin install flow. If your agent has shell access,
+the standalone `sbx` CLI is enough and needs no plugin or MCP support. If the agent needs MCP discovery or inline
+screenshots but doesn't support plugins, use the [manual MCP setup](../README.md#use-it-from-an-agent-mcp).
 
 ## Try it
 
@@ -78,6 +82,7 @@ Start a new session and ask:
 ## How it's put together
 
 - **Layout:** the manifest ([`plugin.json`](../plugin.json)), MCP configuration ([`mcp.json`](../mcp.json)) and [`skills/`](../skills) are at the repository root, so direct installs find the whole plugin. The catalog is [`.github/plugin/marketplace.json`](../.github/plugin/marketplace.json).
+- **One engine, two interfaces:** `sbx` is fully usable on its own. The CLI and MCP adapter call the same core and workflow implementations; MCP adds discoverable schemas, structured tool results and inline screenshot images, not required functionality.
 - **Server code is pinned to a release tag:** `mcp.json` fetches the server from this repository's `v<version>` tag, so its code only changes when you update the plugin. The first launch downloads the server and its dependencies, and npm caches them for later launches.
 - **The `cmd /d /c` wrapper:** on Windows `npx` is a `.cmd` file, which some clients can't start directly. `/d` skips any `cmd` AutoRun commands, whose output could corrupt the MCP messages on stdout.
 - **Permissions:** the agent can start a sandbox, copy in any host path that it names, and run commands inside the sandbox. To limit which host folders it can copy in, set `SANDBOX_MCP_ALLOWED_ROOTS`. See the [security notes](../README.md#security-notes).

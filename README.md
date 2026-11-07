@@ -4,7 +4,8 @@
 
 Not your desktop. Not a container pretending to be Windows. **A real, disposable Windows 11 machine**:
 boot it, deploy your app, drive the controls, catch the crash, keep the evidence, delete the PC.
-One MCP tool call or `sbx run`. The measured GUI samples take roughly **40-50 seconds** end to end.
+Run it directly with `sbx`; the optional MCP adapter exposes discoverable tools and inline images for clients that want them.
+Both interfaces use the same engine. The measured GUI samples take roughly **40-50 seconds** end to end.
 See the [website](https://shanselman.github.io/sandbox-mcp/).
 
 ![Real offline Sandbox: Haptics app UI Automation, light-to-dark theme, app exit and guest teardown](docs/sandbox-teaser.gif)
@@ -18,16 +19,16 @@ No guest runtime installation or haptic-hardware claim. [Fresh dark lab screensh
 
 ### 🤖 Let your agent set it up
 
-Give this to your bot. It checks the PC, verifies the download, preserves your MCP configuration and asks before
-admin changes or a restart:
+Give this to your bot. It checks the PC, verifies the download and asks before admin changes or a restart.
+The CLI works on its own; configure MCP only if your agent needs that interface:
 
 ```text
-Set up Windows Sandbox MCP by following:
+Set up the sandbox-mcp CLI by following:
 https://raw.githubusercontent.com/shanselman/sandbox-mcp/main/docs/agent-setup.md
-Install the latest verified release; ask before admin changes or a restart.
+Install the latest verified release. The CLI must work without MCP; configure the optional MCP adapter only if my agent needs it. Ask before admin changes or a restart.
 ```
 
-**[Download v1.2.0](https://github.com/shanselman/sandbox-mcp/releases/tag/v1.2.0)**: portable CLI + MCP server,
+**[Download v1.2.0](https://github.com/shanselman/sandbox-mcp/releases/tag/v1.2.0)**: portable CLI + optional MCP server,
 bundled Node.js, guest agent and setup instructions. No Node/npm installation needed.
 
 ### “Works on my machine.” Caught in 30 seconds.
@@ -70,7 +71,7 @@ source; the full matrix covers seven configurations. Exact builds, timings, star
 found and remaining coverage gaps are in the [compatibility evidence](docs/compatibility.md).
 
 [Download/setup](#download-and-try-it-no-nodejs-install) · [Agent setup guide](docs/agent-setup.md) ·
-[Measured compatibility and honest limits](docs/compatibility.md) · [MCP tools](#mcp-tools)
+[Measured compatibility and honest limits](docs/compatibility.md) · [CLI and MCP interfaces](#one-engine-two-interfaces)
 
 <details>
 <summary>See a fresh, recorded UI Automation session</summary>
@@ -175,6 +176,7 @@ of Windows Sandbox. The observed optional-component baseline for build 26100.988
 Download the **Windows x64 portable ZIP** from the [latest GitHub release](https://github.com/shanselman/sandbox-mcp/releases/latest)
 and extract it. The ZIP includes `sbx`, the MCP server, their dependencies, the guest agent and skills, and a private
 Node.js runtime. You do not need to clone the repo, install Node/npm, or add anything to PATH.
+Use `sbx.cmd` directly for CLI-only operation; you do not need an MCP client, server configuration or plugin.
 The package is built and tested on native Windows x64; ARM64 is not currently packaged.
 
 Verify the ZIP against its adjacent `.sha256` file before extracting; the [agent setup guide](docs/agent-setup.md)
@@ -318,7 +320,11 @@ sbx install-test .\samples\LeakyApp\install.ps1                              # a
 sbx detonate .\samples\Suspicious\suspicious.ps1                             # a harmless script that acts like malware
 ```
 
-### Use it from an agent (MCP)
+### Use it from an agent (optional MCP)
+
+The `sbx` CLI is fully usable without an MCP server. If your agent can run shell commands, use `sbx` (or
+`.\sbx.cmd` from the portable ZIP) directly. Configure the MCP adapter only when the client benefits from
+discoverable tool schemas, structured tool results and inline screenshot images.
 
 For source installs, use the same client-specific shapes above, replacing the bundled command with your
 installed Node executable. For example, VS Code (`.vscode\mcp.json`):
@@ -343,12 +349,13 @@ screenshot."*
 
 There are also agent skills in [`skills/`](skills) that teach agents each workflow: setup, clean-machine runs,
 interactive UI testing, installer testing and detonating untrusted files. Copy the ones you want into your agent's
-skills folder (for example `~/.copilot/skills/`), or install the plugin below to get them all with the MCP server.
+skills folder (for example `~/.copilot/skills/`), or install the plugin below to get them all with the optional MCP adapter.
 
 ### Install the agent plugin
 
-The [agent plugin](docs/agent-plugin.md) bundles the MCP server and the skills, so you don't need to clone anything
-or edit any MCP configuration. It needs Node.js 20 or later. With GitHub Copilot CLI:
+The [agent plugin](docs/agent-plugin.md) bundles the MCP adapter and skills, so you don't need to clone anything
+or edit MCP configuration. It needs Node.js 20 or later. The plugin is optional if you use the CLI directly.
+With GitHub Copilot CLI:
 
 ```powershell
 copilot plugin marketplace add shanselman/sandbox-mcp
@@ -384,6 +391,45 @@ destination. Apply/verification failures restore the previous touched files wher
 identify the retained guest backup. Stopped processes are not automatically restarted after a failed apply.
 `push` / `sandbox_copy_in` still perform a full replacement. `run`, `install-test` and `detonate` still start fresh;
 incremental deployment never adopts an unrelated sandbox.
+
+## One engine, two interfaces
+
+The `sbx` CLI and MCP server are two interfaces to the same implementation: both import and use `src/core.js`,
+and the higher-level run, installer and detonation workflows are shared too. The CLI is the complete standalone
+interface; MCP is an optional adapter for agents that benefit from discoverable tool schemas, structured results
+and inline screenshot images. They are not separate engines, and their names or output formats are not meant to
+be identical.
+
+For example, both forms run Character Map on a fresh offline guest, capture evidence and destroy the guest:
+
+```powershell
+sbx run C:\Windows\System32\charmap.exe --network off
+```
+
+Or call MCP tool `sandbox_run` with these arguments:
+
+```json
+{
+  "app": "C:\\Windows\\System32\\charmap.exe",
+  "network": "off"
+}
+```
+
+The supported workflows map across the interfaces:
+
+| Workflow | CLI | MCP adapter |
+|---|---|---|
+| Fresh app test | `sbx run` | `sandbox_run` |
+| Guest lifecycle and shared state | `sbx start`, `status`, `stop`, `desktop-release` | `sandbox_start`, `sandbox_status`, `sandbox_stop`, `sandbox_desktop_release` |
+| Commands, processes and files | `sbx exec`, `launch`, `proc`, `push`, `pull`, `deploy`, `errors` | `sandbox_exec`, `sandbox_launch`, `sandbox_process`, `sandbox_copy_in`, `sandbox_copy_out`, `sandbox_deploy`, `sandbox_app_errors` |
+| UI automation and capture | `sbx ui`, `ui wait`, `shot`, `windows`, `click`, `type` | `sandbox_ui_tree`, `sandbox_ui_action`, `sandbox_ui_wait`, `sandbox_screenshot`, `sandbox_windows`, `sandbox_click`, `sandbox_type` |
+| Recording | `sbx record start`, `record stop` | `sandbox_record_start`, `sandbox_record_stop` |
+| Dependencies and provisioning | `sbx deps`, `provision` | `sandbox_deps`, `sandbox_provision` |
+| Installer and untrusted-file tests | `sbx install-test`, `detonate` | `sandbox_install_test`, `sandbox_detonate` |
+| System snapshots | `sbx snapshot`, `diff` | `sandbox_snapshot`, `sandbox_diff` |
+
+Use the CLI's human-readable output and process exit codes in a shell; add `--json` for machine-readable output.
+The MCP adapter presents schemas and structured results to compatible clients and can return screenshots inline.
 
 ## MCP tools
 

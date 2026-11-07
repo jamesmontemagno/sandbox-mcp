@@ -1,13 +1,15 @@
 ---
 name: windows-sandbox-installer-test
-description: Test a Windows installer and uninstaller on a clean machine with Windows Sandbox. Use when asked whether a setup.exe or .msi installs silently, what it adds to the system, whether its uninstaller cleans up, why an install hangs, or what an installer leaves behind.
+description: Test a Windows installer and uninstaller on a clean machine with Windows Sandbox using sbx or the optional MCP adapter. Use when asked whether a setup.exe or .msi installs silently, what it adds to the system, whether its uninstaller cleans up, why an install hangs, or what an installer leaves behind.
 ---
 
 # Test an installer
 
+If shell access is available, use the `sbx` CLI; the optional MCP adapter uses the same engine and is not required.
+
 If a tool says the sandbox isn't ready, follow the windows-sandbox-setup skill.
 
-Call `sandbox_install_test` with `installer` set to a host path to a `.msi`, `.exe`, `.ps1`, `.cmd` or `.bat`. CLI equivalent: `sbx install-test setup.msi`. It boots a fresh sandbox and then snapshots, installs, snapshots, optionally runs a test, uninstalls, snapshots again and destroys the sandbox. Allow about two minutes plus the installer's own time.
+Run `sbx install-test <installer>` or call `sandbox_install_test` with `installer` set to a host path to a `.msi`, `.exe`, `.ps1`, `.cmd` or `.bat`. Both use the same workflow: boot a fresh sandbox and then snapshot, install, snapshot, optionally run a test, uninstall, snapshot again and destroy the sandbox. Allow about two minutes plus the installer's own time.
 
 ## Make it silent
 

@@ -45,3 +45,32 @@ test('skills link only to skills that exist', () => {
     }
   }
 });
+
+test('focused skills offer the standalone CLI without requiring MCP', () => {
+  const guidance = 'If shell access is available, use the `sbx` CLI; the optional MCP adapter uses the same engine and is not required.';
+  for (const name of [
+    'windows-sandbox-setup',
+    'windows-sandbox-app-test',
+    'windows-sandbox-interactive',
+    'windows-sandbox-installer-test',
+    'windows-sandbox-detonate',
+  ]) {
+    assert.ok(read(`skills/${name}/SKILL.md`).includes(guidance), `${name} must offer the standalone CLI`);
+  }
+});
+
+test('CLI and MCP adapter are documented against their shared core', () => {
+  const cli = read('src/cli.js');
+  const server = read('src/server.js');
+  for (const [source, name] of [[cli, 'CLI'], [server, 'MCP adapter']]) {
+    assert.match(source, /import \* as sbx from '\.\/core\.js'/, `${name} must use the shared core`);
+    for (const module of ['run.js', 'install.js', 'detonate.js', 'deps.js', 'provision.js']) {
+      assert.ok(source.includes(`from './${module}'`), `${name} must share ${module}`);
+    }
+  }
+  const readme = read('README.md');
+  for (const command of ['run', 'ui', 'record', 'deploy', 'deps', 'provision', 'install-test', 'detonate', 'status']) {
+    assert.ok(readme.includes(`sbx ${command}`), `README is missing the sbx ${command} mapping`);
+  }
+  assert.match(readme, /MCP is an optional adapter/i);
+});

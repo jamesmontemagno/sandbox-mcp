@@ -1,13 +1,16 @@
-# Set up Windows Sandbox MCP for a user
+# Set up sandbox-mcp for a user
 
 These are instructions for an AI agent, not permission to elevate, restart Windows, replace another server,
 close someone else's Sandbox or change organizational policy. Do the work with the user's existing tools.
 Stop and explain a blocked prerequisite rather than silently treating it as configured.
+The portable release includes a standalone `sbx` CLI; using it does not require an MCP client, server or plugin.
+Continue to the MCP registration step only when the user wants discoverable MCP tools or inline screenshot results.
 
-## 1. Choose the right build and MCP destination
+## 1. Choose the right build and interface
 
-Confirm which **client, harness and configuration scope** you are running in. Do not infer `.vscode\mcp.json`
-just because the editor is VS Code: modern Copilot sessions can use **Copilot Global**.
+For CLI-only use, no client configuration destination is needed. If MCP is requested, confirm which **client,
+harness and configuration scope** you are running in. Do not infer `.vscode\mcp.json` just because the editor
+is VS Code: modern Copilot sessions can use **Copilot Global**.
 
 - **Normal install:** use the latest public stable release. Version 1.2.0 includes recording, deployment,
   dependency diagnosis, explicit provisioning and package activation. Freeze the resolved release/version
@@ -143,7 +146,7 @@ if ($LASTEXITCODE -notin @(0, 1)) { throw 'doctor failed to return a readiness r
 Checksums verify artifact bytes, not a signed publisher attestation; the GitHub repository/run identity
 still matters. Preserve the selected run URL, full SHA and checksum in the setup summary.
 
-## 4. Register without clobbering existing configuration
+## 4. Optional: register MCP without clobbering existing configuration
 
 Review the absolute `node.exe` and `src\server.js` paths. The portable server uses its private Node runtime;
 do not rely on a GUI client's PATH. Configuration is per client, not one universal JSON format.
@@ -216,11 +219,12 @@ For example, `Merge-SandboxMcpConfig -ConfigPath <absolute-config-path> -Install
 If using `copilot mcp add`, first check `copilot mcp add --help`; honor `COPILOT_HOME`. Back up the file first
 and verify that unrelated entries are unchanged afterward.
 
-## 5. Prove a tool works, not just that JSON exists
+## 5. Prove the selected interface works, not just that files exist
 
-Tell the user to reload/restart the client or reconnect this server, and approve the client server-trust prompt.
-From the intended client, call `sandbox_status`: require a real structured tool result, not merely a registration
-or tools-list success. If another guest is running, report it and do not stop it.
+For CLI-only use, run `sbx status`; no client reload or MCP registration is needed. If MCP was requested, tell the
+user to reload/restart the client or reconnect this server, and approve the client server-trust prompt. From the
+intended client, call `sandbox_status`: require a real tool result, not merely a registration or tools-list success.
+If another guest is running, report it and do not stop it.
 
 When the singleton Sandbox slot is free and `doctor` is ready, run a harmless offline smoke:
 
@@ -228,7 +232,7 @@ When the singleton Sandbox slot is free and `doctor` is ready, run a harmless of
 & (Join-Path $Install 'sbx.cmd') run C:\Windows\System32\charmap.exe --network off
 ```
 
-For an MCP-enabled agent, perform the same via `sandbox_run` with
+For an MCP-enabled agent, perform the same operation via `sandbox_run` with
 `app: "C:\\Windows\\System32\\charmap.exe"` and `network: "off"`. Require `pass: true`, a screenshot
 and an existing `out\report.md`; confirm `wsb list --raw` is empty after **your** guest's teardown.
 Do not claim a tool was usable in the user's current session if it needs a reload you cannot perform.

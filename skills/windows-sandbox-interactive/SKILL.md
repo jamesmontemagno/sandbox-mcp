@@ -5,17 +5,34 @@ description: Explore and drive a Windows app step by step in a live Windows Sand
 
 # Drive a live Windows Sandbox
 
-For a single pass/fail check, use `sandbox_run` from the windows-sandbox-app-test skill instead. If a tool says the sandbox isn't ready, follow the windows-sandbox-setup skill.
+If shell access is available, use the `sbx` CLI; the optional MCP adapter uses the same engine and is not required.
+For a single pass/fail check, use `sbx run` or `sandbox_run` from the windows-sandbox-app-test skill instead.
+If a command or tool says the sandbox isn't ready, follow the windows-sandbox-setup skill.
 
 ## The loop
 
-1. `sandbox_start`. Takes 20-40 s, and waits for the desktop to be ready. Use `network: "off"` when the app must not reach the internet; `"firewall"` is weaker because admin code could undo it. `sandbox_status` reports readiness, the boot epoch and the verified agent version.
-2. `sandbox_copy_in` the build output folder. It lands in `C:\apps\<name>` by default.
-3. `sandbox_launch` a GUI app (returns its `pid`), or `sandbox_exec` a console command (returns stdout, stderr and exit code). Long-running processes belong in `sandbox_launch`. For an installed package, pass `aumid: "PackageFamilyName!AppId"` to `sandbox_launch`.
+1. Start with `sbx start` or `sandbox_start`. Takes 20-40 s, and waits for the desktop to be ready. Use `--network off` or `network: "off"` when the app must not reach the internet; `"firewall"` is weaker because admin code could undo it. `sbx status` / `sandbox_status` reports readiness, the boot epoch and the verified agent version.
+2. Copy the build output with `sbx push <hostPath>` or `sandbox_copy_in`; it lands in `C:\apps\<name>` by default.
+3. Use `sbx launch <exe>` or `sandbox_launch` for a GUI app, and `sbx exec <command...>` or `sandbox_exec` for a console command. Long-running processes belong in `launch`. For an installed package, use its `PackageFamilyName!AppId` AUMID.
 4. Look and act, using the tools below.
 5. `sandbox_app_errors` with the `launchedAt` time from `sandbox_launch`, to catch crashes and .NET unhandled exceptions. `sandbox_process` shows whether the app is still running.
 6. `sandbox_copy_out` logs, output files and crash dumps.
-7. `sandbox_stop`. Everything inside is destroyed; artifacts stay on the host in the run's `out` folder. Always stop when finished, because only one sandbox can exist at a time.
+7. Stop with `sbx stop` or `sandbox_stop`. Everything inside is destroyed; artifacts stay on the host in the run's `out` folder. Always stop when finished, because only one sandbox can exist at a time.
+
+## CLI and MCP command map
+
+These are interfaces to the same engine and shared guest state, not two required components:
+
+| Workflow | CLI | MCP |
+|---|---|---|
+| Guest lifecycle / status | `sbx start`, `status`, `stop`, `desktop-release` | `sandbox_start`, `sandbox_status`, `sandbox_stop`, `sandbox_desktop_release` |
+| UI inspection / actions | `sbx ui tree`, `ui wait`, `ui click`, `ui set`, `click`, `type`, `windows`, `proc`, `errors` | `sandbox_ui_tree`, `sandbox_ui_wait`, `sandbox_ui_action`, `sandbox_click`, `sandbox_type`, `sandbox_windows`, `sandbox_process`, `sandbox_app_errors` |
+| Screenshots / recording | `sbx shot`, `sbx record start`, `sbx record stop` | `sandbox_screenshot`, `sandbox_record_start`, `sandbox_record_stop` |
+| Commands, files and warm deploy | `sbx exec`, `push`, `pull`, `deploy` | `sandbox_exec`, `sandbox_copy_in`, `sandbox_copy_out`, `sandbox_deploy` |
+| Snapshots / prerequisites | `sbx snapshot`, `diff`, `deps`, `provision` | `sandbox_snapshot`, `sandbox_diff`, `sandbox_deps`, `sandbox_provision` |
+
+Use the CLI when the agent can run shell commands; use MCP when its discoverable schemas, structured results or
+inline screenshot images help. The tool names and output formats differ, but both reach the same implementation.
 
 ## Prefer UI Automation over pixels
 
@@ -29,7 +46,8 @@ WinForms, WPF, Win32 and WinUI controls all appear in the tree. The first UI Aut
 
 ## Warm deploy loop
 
-For build, deploy, relaunch, repeat: start once, then call `sandbox_deploy` with `hostPath`, an optional `sandboxPath`, `launch: "MyApp.exe"` and `restart: true`. CLI: `sbx deploy <hostDir> [guestDir] --launch MyApp.exe --restart`.
+For build, deploy, relaunch, repeat: start once, then run `sbx deploy <hostDir> [guestDir] --launch MyApp.exe --restart`,
+or call `sandbox_deploy` with `hostPath`, an optional `sandboxPath`, `launch: "MyApp.exe"` and `restart: true`.
 
 - It transfers only changed files, removes deleted ones and verifies every hash. `sandbox_copy_in` is still a full replacement.
 - Use a dedicated guest folder, because **extra files in it are deleted**.
@@ -38,7 +56,7 @@ For build, deploy, relaunch, repeat: start once, then call `sandbox_deploy` with
 
 ## Keep visual evidence
 
-`sandbox_record_start` and `sandbox_record_stop` (CLI: `sbx record start|stop`) record the desktop, even during long `sandbox_exec` calls. The defaults are 2 fps for 120 s, with caps of 5 fps, 300 s and 600 frames. Stopping publishes a self-contained HTML flipbook, plus an MP4 if ffmpeg is already on the host. Frames survive a crash, and nothing is installed in the guest.
+`sbx record start` / `sbx record stop` or `sandbox_record_start` / `sandbox_record_stop` record the desktop, even during long `sbx exec` / `sandbox_exec` calls. The defaults are 2 fps for 120 s, with caps of 5 fps, 300 s and 600 frames. Stopping publishes a self-contained HTML flipbook, plus an MP4 if ffmpeg is already on the host. Frames survive a crash, and nothing is installed in the guest.
 
 ## Sharing with the CLI
 
