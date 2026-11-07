@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { spawn } from 'node:child_process';
 import { planProvision, selectDotnetFile, recordProvisioning } from '../../src/provision.js';
 
 const core = { component: 'Microsoft.NETCore.App', version: '10.0.0', architecture: 'x64', status: 'missing' };
@@ -59,4 +60,24 @@ test('provenance is persistent and explicitly non-clean before and after install
   recordProvisioning(dir, 'auto', [{ component: 'Microsoft.WindowsDesktop.App', version: '10.0.14' }]);
   assert.equal(read().provisioned.length, 1);
   assert.equal(fs.readdirSync(dir).length, 1);
+});
+
+test('independent provenance writers retain all installations and sticky non-clean state', async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sbx-provision-writers-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const module = new URL('../../src/provision.js', import.meta.url).href;
+  await Promise.all(['desktop', 'vcredist'].map((component) => new Promise((resolve, reject) => {
+    const code = `import { recordProvisioning } from ${JSON.stringify(module)};
+      for (let i=0;i<20;i++) recordProvisioning(${JSON.stringify(dir)}, 'auto', [{component:${JSON.stringify(component)},version:String(i)}]);
+      recordProvisioning(${JSON.stringify(dir)}, 'auto', []);`;
+    const child = spawn(process.execPath, ['--input-type=module', '-e', code]);
+    let stderr = '';
+    child.stderr.on('data', (data) => stderr += data);
+    child.on('error', reject);
+    child.on('exit', (code) => code === 0 ? resolve() : reject(new Error(stderr)));
+  })));
+  const result = JSON.parse(fs.readFileSync(path.join(dir, 'provisioning.json'), 'utf8'));
+  assert.equal(result.cleanMachine, false);
+  assert.equal(result.provisioned.length, 40);
+  assert.equal(new Set(result.provisioned.map((r) => `${r.component}:${r.version}`)).size, 40);
 });

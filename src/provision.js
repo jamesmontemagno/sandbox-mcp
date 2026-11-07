@@ -7,6 +7,7 @@ import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import * as sbx from './core.js';
 import { scanDependencies } from './deps.js';
+import { atomicJson, readJson, withStateLock } from './coordination.js';
 
 const q = (s) => `'${String(s).replace(/'/g, "''")}'`;
 const FRAMEWORKS = {
@@ -175,9 +176,12 @@ export async function prepareProvision(scan, requested) {
 
 export function recordProvisioning(runDir, requested, provisioned) {
   const file = path.join(runDir, 'provisioning.json');
-  const temporary = `${file}.${randomUUID()}.partial`;
-  fs.writeFileSync(temporary, JSON.stringify({ cleanMachine: false, requested, provisioned, updatedAt: new Date().toISOString() }, null, 2));
-  fs.renameSync(temporary, file);
+  withStateLock(runDir, () => {
+    const previous = readJson(file);
+    const records = new Map((previous?.provisioned || []).map((record) => [JSON.stringify(record), record]));
+    for (const record of provisioned) records.set(JSON.stringify(record), record);
+    atomicJson(file, { cleanMachine: false, requested, provisioned: [...records.values()], updatedAt: new Date().toISOString() });
+  });
 }
 
 export async function installProvision(prepared, onInstalled = () => {}, target) {
