@@ -500,14 +500,14 @@ export async function processInfo(pid) { return call('process', { pid }); }
 
 export async function windows() { return [].concat((await call('windows')) ?? []); }
 
-export async function recordStart(options = {}) {
+export async function recordStart(options = {}, target) {
   const limits = recordingOptions(options);
-  const s = await requireSandbox();
+  const s = target || await requireSandbox();
   const recordingId = randomBytes(16).toString('hex');
   const directory = path.join(s.runDir, 'out', 'recordings', recordingId);
   reserveRecording(HOME, s, { recordingId, directory, ...limits });
   const result = await call('recordstart', { recordingId, ...limits }, 30_000, s);
-  return { ...result, directory };
+  return { ...result, recordingId, directory };
 }
 
 export async function recordStop({ recordingId, target } = {}) {

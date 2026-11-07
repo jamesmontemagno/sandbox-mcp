@@ -8,12 +8,13 @@ import { promisify } from 'node:util';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { protocolProof } from './protocol-proof.js';
+import { atomicJson, readJson, withStateLock } from '../src/coordination.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const runtimeRoot = process.env.SANDBOX_MCP_TEST_ROOT ? path.resolve(process.env.SANDBOX_MCP_TEST_ROOT) : root;
 const execute = promisify(execFile);
 const network = process.argv[2] || 'off';
-assert.ok(['off', 'on'].includes(network), 'Usage: node test/integration.js [off|on]');
+assert.ok(['off', 'on', 'firewall'].includes(network), 'Usage: node test\\integration.js [off|on|firewall]');
 assert.ok(process.env.SANDBOX_MCP_HOME, 'Set a lane-specific SANDBOX_MCP_HOME before running.');
 const evidenceDir = path.join(process.env.SANDBOX_MCP_HOME, 'integration');
 fs.mkdirSync(evidenceDir, { recursive: true });
@@ -75,14 +76,30 @@ try {
   assert.equal(target.identity.protocolVersion, 2);
   await protocolProof(target);
   record('encrypted transport identity, tamper, replay, stale epoch and version rejection', target.identity);
+  await Promise.all(Array.from({ length: 5 }, (_, i) => i % 2
+    ? call('sandbox_exec', { command: `"mcp-${i}"` })
+    : cli('exec', `"cli-${i}"`)));
+  record('concurrent CLI and MCP encrypted exec calls');
   if (network === 'off') {
     const adapters = await call('sandbox_exec', { command: '@(Get-NetAdapter -ErrorAction SilentlyContinue).Count' });
     assert.match(adapters.text.trim(), /--- stdout ---\r?\n0$/);
     record('offline guest has no network adapter');
+    withStateLock(process.env.SANDBOX_MCP_HOME, () => {
+      const stateFile = path.join(process.env.SANDBOX_MCP_HOME, 'current.json');
+      const state = readJson(stateFile);
+      assert.equal(state.epoch, ownedEpoch);
+      state.mailboxSeq++;
+      atomicJson(stateFile, state);
+    });
+    const gapStart = Date.now();
+    assert.match((await call('sandbox_exec', { command: '"after-gap"' })).text, /after-gap/);
+    assert.ok(Date.now() - gapStart < 30_000, 'crashed-writer gap did not recover within 30 seconds');
+    record('offline abandoned mailbox reservation recovered', { ms: Date.now() - gapStart });
   }
-  await call('sandbox_copy_in', {
+  await Promise.all([call('sandbox_copy_in', {
     hostPath: path.join(root, 'samples', 'HelloSandbox', 'bin'), sandboxPath: 'C:\\apps\\integration',
-  });
+  }), cli('push', path.join(root, 'LICENSE'), 'C:\\apps\\integration-license.txt')]);
+  record('concurrent CLI and MCP copy calls');
   const launched = await json('sandbox_launch', { path: 'C:\\apps\\integration\\HelloSandbox.exe', waitForWindowSec: 20 });
   assert.ok(launched.pid > 0);
   const tree = await call('sandbox_ui_tree', { pid: launched.pid });
@@ -126,6 +143,10 @@ try {
   assert.equal(statuses[1].id, ownedId);
   assert.ok(statuses[2].some((window) => window.title === 'Hello Sandbox'));
   record('concurrent CLI and MCP readers');
+  await call('sandbox_desktop_release');
+  await cli('ui', 'set', '--pid', String(launched.pid), '--id', 'NameBox', '--value', 'CLI desktop turn');
+  assert.match((await call('sandbox_ui_tree', { pid: launched.pid })).text, /CLI desktop turn/);
+  record('MCP desktop release transfers turn to CLI');
 } catch (error) {
   evidence.error = error.stack;
   console.error(error);

@@ -610,6 +610,8 @@ and never stop somebody else's guest.
 $env:SANDBOX_MCP_HOME = Join-Path $PWD 'work\integration'
 node test\integration.js off
 node test\integration.js on
+node test\integration.js firewall
+node test\evidence.js
 npm run package:win
 node test\package-smoke.js dist\sandbox-mcp-win-x64-v1.1.0.zip
 ```

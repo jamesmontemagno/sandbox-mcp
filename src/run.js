@@ -71,7 +71,7 @@ export async function runApp(o) {
       r.provisioned.push(record);
       recordProvisioning(r.runDir, o.provision, r.provisioned);
     }, target);
-    if (o.record) ownedRecording = await sbx.recordStart();
+    if (o.record) ownedRecording = await sbx.recordStart({}, target);
     if (packaged) {
       sbx.log(`installing ${exe}`);
       r.package = await installPackage(src, packaged, o.appId, target);
