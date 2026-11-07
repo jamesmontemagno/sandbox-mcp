@@ -8,6 +8,8 @@ import * as sbx from './core.js';
 import { runApp } from './run.js';
 import { installTest, installSummary } from './install.js';
 import { detonate, detonateSummary } from './detonate.js';
+import { scanDependencies } from './deps.js';
+import { provisionSandbox } from './provision.js';
 
 const text = (v) => ({ content: [{ type: 'text', text: typeof v === 'string' ? v : JSON.stringify(v, null, 2) }] });
 const image = (base64, caption) => ({ content: [{ type: 'image', data: base64, mimeType: 'image/png' }, { type: 'text', text: caption }] });
@@ -23,6 +25,21 @@ const network = z.enum(['on', 'firewall', 'off']).optional().describe(
 let startedId = null;
 sbx.setDesktopOwner(process.env.SANDBOX_MCP_WORKFLOW || `mcp:${process.pid}`);
 const server = new McpServer({ name: 'sandbox-mcp', version: sbx.VERSION });
+
+server.registerTool('sandbox_deps', {
+  title: 'Diagnose application dependencies',
+  description: 'Host-only static scan of PE imports, .NET runtime configs, AppxManifest and scripts. Does not boot a sandbox, execute the app or install anything. Unknown/dynamic dependencies still require runtime observation.',
+  inputSchema: { path: z.string().describe('Host app file or folder to inspect.') },
+}, tool(async ({ path }) => text(scanDependencies(path))));
+
+server.registerTool('sandbox_provision', {
+  title: 'Explicitly provision dependencies into a started sandbox',
+  description: 'OPT IN only. Host downloads official Microsoft runtime installers, verifies published hashes when available and Microsoft Authenticode signatures, then copies and silently installs in the already-started guest. Works with guest networking off. This is no longer a clean-machine test.',
+  inputSchema: {
+    app: z.string().describe('Host app path for dependency diagnosis.'),
+    provision: z.string().describe('auto or comma-separated vcredist:x64,desktop:10.0:x64,dotnet:10.0:x64,aspnetcore:10.0:x64,windows-app-runtime:1.8:x64'),
+  },
+}, tool(async ({ app, provision }) => text(await provisionSandbox(app, provision))));
 
 server.registerTool('sandbox_start', {
   title: 'Start Windows Sandbox',
@@ -245,6 +262,7 @@ server.registerTool('sandbox_run', {
     exe: z.string().optional().describe('Exe name when app is a folder with more than one .exe.'),
     args: z.string().optional(),
     console: z.boolean().optional().describe('Console app: run to completion and capture stdout instead of launching a window.'),
+    provision: z.string().optional().describe('Explicit opt-in: auto or comma-separated runtime list (e.g. desktop:10.0:x64,vcredist:x64). Host downloads and verifies installers; guest can stay offline. Marks this run PROVISIONED, never a clean-machine pass. Omit for a true clean-machine test.'),
     waitSec: z.number().min(0).optional().describe('GUI apps: seconds to let the app settle before observing (default 5).'),
     test: z.string().optional().describe('Host path to a .ps1 run inside after launch. Gets $env:SBX_APP_PID, SBX_APP_DIR, SBX_APP_EXE, SBX_OUT. Non-zero exit = fail.'),
     collect: z.array(z.string()).optional().describe('Sandbox paths to copy back to the host afterwards (logs, output files).'),
@@ -259,6 +277,7 @@ server.registerTool('sandbox_run', {
   const summary = [
     `${r.pass ? 'PASS' : 'FAIL'}: ${r.app}${r.failures.length ? ` (${r.failures.join('; ')})` : ''}`,
     `Report: ${r.reportPath ?? '(none)'}`,
+    r.provisionRequested && `PROVISIONED (not a clean-machine pass): ${JSON.stringify(r.provisioned)}`,
     r.console && `--- console stdout ---\n${cap(r.console.stdout, 20_000)}`,
     r.test && `--- test ${r.test.script}: exit ${r.test.exitCode} ---\n${cap(r.test.stdout, 20_000)}${r.test.stderr ? `\n--- test stderr ---\n${cap(r.test.stderr, 10_000)}` : ''}`,
     r.crashes.length && `--- crash events ---\n${r.crashes.map((e) => `${e.source} ${e.id}: ${e.message}`).join('\n\n')}`,

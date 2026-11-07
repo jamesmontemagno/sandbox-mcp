@@ -6,6 +6,8 @@ import * as sbx from './core.js';
 import { runApp, summary } from './run.js';
 import { installTest, installSummary } from './install.js';
 import { detonate, detonateSummary } from './detonate.js';
+import { scanDependencies, formatDependencies } from './deps.js';
+import { provisionSandbox } from './provision.js';
 
 const HELP = `sbx ${sbx.VERSION} - fresh, throwaway Windows machines for testing your apps (Windows Sandbox)
 
@@ -17,6 +19,7 @@ One shot
       --exe <name>                   Which exe, when <folder> has several
       --args "<args>"                Arguments for the app
       --console                      Console app: run to completion and capture output
+      --provision <auto|list>         OPT IN: install verified runtimes; report is NOT a clean-machine pass
       --wait <sec>                   Let a GUI app settle before observing (default 5)
       --test <script.ps1>            Run a test script inside afterwards ($env:SBX_APP_PID, SBX_APP_DIR, SBX_OUT)
       --collect <sandbox path>       Copy a file/folder back out afterwards (repeatable)
@@ -80,6 +83,9 @@ Step by step
   stop [--force]                     Destroy the sandbox (--force: also one not started by sbx)
 
 Other
+  deps <app path>                     Diagnose dependencies without booting or installing anything
+  provision <app path> --provision <auto|list>
+                                     Install dependencies into an already-started sandbox (host downloads)
   doctor                             Check this PC can run Windows Sandbox, and say how to fix it if not
   mcp                                Run the MCP server on stdio
   help | version
@@ -91,7 +97,7 @@ Data: ${sbx.HOME}`;
 
 // Options that take a value; everything else starting with -- is a boolean flag.
 const VALUE_OPTS = new Set(['network', 'memory', 'exe', 'args', 'wait', 'test', 'collect', 'cwd', 'timeout', 'window', 'pid', 'name', 'since',
-  'id', 'type', 'index', 'value', 'depth', 'max', 'uninstall', 'uninstall-args', 'exclude', 'duration', 'every', 'launch']);
+  'id', 'type', 'index', 'value', 'depth', 'max', 'uninstall', 'uninstall-args', 'exclude', 'duration', 'every', 'launch', 'provision']);
 const REPEAT_OPTS = new Set(['collect', 'exclude']);
 
 function parse(argv) {
@@ -166,6 +172,16 @@ async function main(argv) {
       return r.ok ? 0 : 1;
     }
 
+    case 'deps':
+      need(1, 'deps <app path>');
+      out(opt, scanDependencies(pos[0]), formatDependencies);
+      return 0;
+
+    case 'provision':
+      need(1, 'provision <app path> --provision <auto|list>');
+      out(opt, await provisionSandbox(pos[0], opt.provision));
+      return 0;
+
     case 'start':
       out(opt, await sbx.startSandbox(startOpts(opt)), (r) =>
         `Sandbox ${r.id} ready in ${r.bootSeconds.toFixed(1)}s (network ${r.network}). Artifacts: ${r.outDir}`);
@@ -174,7 +190,8 @@ async function main(argv) {
     case 'status':
       out(opt, await sbx.status(), (s) => s.running
         ? `Running: ${s.id} (network ${s.network}, since ${s.startedAt}, agent ${s.agent})\n` +
-          `Epoch: ${s.epoch}; protocol ${s.identity.protocolVersion}; agent ${s.identity.agentVersion}; SHA256 ${s.identity.agentSha256}\nArtifacts: ${s.outDir}`
+          `Epoch: ${s.epoch}; protocol ${s.identity.protocolVersion}; agent ${s.identity.agentVersion}; SHA256 ${s.identity.agentSha256}` +
+          `${s.provisioning ? '\nPROVISIONING OPT-IN: not a clean machine; see provisioning.json in the run folder.' : ''}\nArtifacts: ${s.outDir}`
         : `No sbx sandbox running.${s.otherSandboxes.length ? ` Other sandbox(es): ${s.otherSandboxes.join(', ')}` : ''}`);
       return 0;
 
@@ -328,7 +345,7 @@ async function main(argv) {
     case 'run': {
       need(1, 'run <app.exe|folder> [--exe <name>] [--args "..."] [--console] [--test <script.ps1>] [--collect <path>]... [--keep]');
       const r = await runApp({
-        app: pos[0], exe: opt.exe, args: opt.args, console: !!opt.console, waitSec: num(opt.wait, '--wait'),
+        app: pos[0], exe: opt.exe, args: opt.args, console: !!opt.console, waitSec: num(opt.wait, '--wait'), provision: opt.provision,
         test: opt.test, collect: opt.collect, keep: !!opt.keep, timeoutSec: num(opt.timeout, '--timeout'), ...startOpts(opt),
       });
       if (opt.json) console.log(JSON.stringify({ ...r, shots: r.shots.map(({ previewBase64, ...s }) => s) }, null, 2));

@@ -11,6 +11,15 @@ no winget. It has Windows PowerShell 5.1 and .NET Framework 4.8. Treat it like a
 
 ## Pick the shortest path
 
+Use `sandbox_deps` / `sbx deps <path>` first for a host-only dependency diagnosis. This does not execute the app
+or install anything. The default run remains a clean-machine test; missing runtimes are findings, not permission
+to install them. Static scan limitations and uncertain optional components are included in the output.
+Only when the user explicitly requests runtime installation, pass `provision: "auto"` / `--provision auto`
+or a list such as `desktop:10.0:x64,vcredist:x64`. The host verifies and caches official Microsoft installers,
+then copies them in, so guest networking can stay off. Label the result **provisioned, not a clean-machine pass**.
+For a guest already started with the step tools, use `sandbox_provision` / `sbx provision <host app path>
+--provision <auto|list>`; it never boots or adopts a guest.
+
 1. **"Does my build run on a clean machine?"** -> `sandbox_run` (or `sbx run <app.exe|folder>`). One call boots,
    copies the app in, launches it, screenshots it, checks the event log for crashes, optionally runs a test script,
    copies files out, destroys the sandbox and writes `report.md`. `pass` / the exit code is the verdict.
@@ -60,8 +69,8 @@ no winget. It has Windows PowerShell 5.1 and .NET Framework 4.8. Treat it like a
 - If a tool says "Windows Sandbox isn't ready on this PC", pass its fix list on to the user (it usually needs an
   admin command and a restart); don't try to work around it. `sbx doctor` re-checks.
 - One sandbox at a time: if `sandbox_start` says one is running, stop it (or ask the user if it isn't ours).
-- Boot is fresh every time, so install prerequisites (VC++ runtime, .NET runtime, WebView2) inside the run if the
-  app needs them; a missing prerequisite is often exactly the bug being hunted.
+- Boot is fresh every time. Diagnose missing prerequisites first; do not install them without explicit user opt-in.
+  A missing prerequisite is often exactly the bug being hunted.
 - `sandbox_exec` runs Windows PowerShell 5.1 as an admin user in the interactive session. Use `shell: "cmd"` for
   batch syntax. Long-running or GUI processes belong in `sandbox_launch`.
 - In `sbx run --test script.ps1`, the script runs inside the sandbox with `$env:SBX_APP_PID`, `$env:SBX_APP_DIR`,

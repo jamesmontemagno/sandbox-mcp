@@ -3,6 +3,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import * as sbx from './core.js';
+import { scanDependencies, formatDependencies, classifyDependencyFailure, GUEST_DEPENDENCY_INVENTORY } from './deps.js';
+import { prepareProvision, installProvision, recordProvisioning } from './provision.js';
 
 const q = (s) => `'${String(s).replace(/'/g, "''")}'`;
 
@@ -45,19 +47,33 @@ export async function runApp(o) {
   const appDir = builtIn ? `C:\\Windows${dir.slice(winDir.length)}` : `C:\\apps\\${exe.replace(/\.exe$/i, '')}`;
   const exePath = `${appDir}\\${exe}`;
   const r = { app: exe, hostDir: dir, args: o.args || '', mode: o.console ? 'console' : 'gui', startedAt: new Date().toISOString(), shots: [], collected: [] };
+  if (!builtIn) r.dependencies = scanDependencies(src);
+  r.cleanMachine = !o.provision;
+  r.provisionRequested = o.provision;
+  r.provisioned = [];
   const t0 = Date.now();
   let booted = false;
   try {
+    const prepared = o.provision ? await prepareProvision(r.dependencies || { requirements: [], binaries: [] }, o.provision) : [];
     const boot = await sbx.startSandbox(o);
     booted = true;
     r.sandbox = { id: boot.id, network: boot.network, bootSeconds: boot.bootSeconds };
     r.runDir = boot.runDir; r.outDir = boot.outDir;
+    const inventory = await sbx.exec({ command: GUEST_DEPENDENCY_INVENTORY });
+    if (inventory.exitCode !== 0 || inventory.timedOut) throw new Error(`Guest dependency inventory failed: ${inventory.stderr || inventory.stdout}`);
+    r.guestBaseline = JSON.parse(inventory.stdout);
+    if (o.provision) recordProvisioning(r.runDir, o.provision, r.provisioned);
+    await installProvision(prepared, (record) => {
+      r.provisioned.push(record);
+      recordProvisioning(r.runDir, o.provision, r.provisioned);
+    });
     if (builtIn) sbx.log(`${exe} is part of Windows: running the sandbox's own copy`);
     else {
       sbx.log(`copying ${dir} to ${appDir}`);
       await sbx.copyIn(dir, appDir);
     }
     sbx.log(`running ${exe}${o.args ? ` ${o.args}` : ''}`);
+    r.launchAttempted = true;
 
     if (o.console) {
       r.console = await sbx.exec({ command: `& ${q(exePath)} ${o.args || ''}; exit $LASTEXITCODE`, cwd: appDir, timeoutSec: o.timeoutSec ?? 300 });
@@ -67,6 +83,9 @@ export async function runApp(o) {
       await sbx.sleep((o.waitSec ?? 5) * 1000);
       r.process = await sbx.processInfo(r.launch.pid);
       if (r.process.hasWindow) r.shots.push(await shot({ pid: r.launch.pid, name: 'app' }));
+      if (r.process.hasWindow && r.dependencies?.requirements.some((d) => /^Microsoft\.(NETCore|WindowsDesktop|AspNetCore)\.App$/.test(d.component))) {
+        r.runtimeDiagnostic = sbx.formatUiTree(await sbx.uiTree({ pid: r.launch.pid, depth: 6, maxNodes: 100 }));
+      }
     }
 
     if (o.test) {
@@ -97,6 +116,8 @@ export async function runApp(o) {
   const stem = exe.replace(/\.exe$/i, '').toLowerCase();
   r.crashes = (r.errors || []).filter((e) => (e.message || '').toLowerCase().includes(stem));
   r.failures = runFailures(r);
+  r.dependencyFindings = classifyDependencyFailure(r);
+  for (const finding of r.dependencyFindings) r.failures.push(finding.message);
   r.pass = r.failures.length === 0;
 
   if (r.outDir) {
@@ -136,6 +157,8 @@ export function summary(r) {
   const lines = [`${r.pass ? 'PASS' : 'FAIL'}  ${r.app} on a fresh Windows Sandbox (${r.seconds.toFixed(1)}s)`];
   const row = (k, v) => lines.push(`  ${k.padEnd(8)} ${v}`);
   if (!r.pass) row('why', r.failures.join('; '));
+  if (r.dependencies) row('deps', `${r.dependencies.requirements.filter((d) => d.status === 'missing').length} potentially missing on the clean baseline (static diagnosis)`);
+  if (r.provisionRequested) row('baseline', `PROVISIONED (not a clean-machine pass): ${r.provisioned.map((p) => `${p.component} ${p.version || ''} ${p.architecture}`).join(', ') || 'no installs completed'}`);
   if (r.sandbox) row('sandbox', `network ${r.sandbox.network}, booted in ${r.sandbox.bootSeconds.toFixed(1)}s`);
   row('process', processState(r));
   if (r.errors) row('crashes', r.crashes.length ? `${r.crashes.length} event(s): ${[...new Set(r.crashes.map((e) => e.source))].join(', ')}` : 'none');
@@ -159,12 +182,16 @@ export function renderReport(r) {
     `| Process | ${proc} |`,
     `| Total time | ${r.seconds.toFixed(1)}s |`,
     `| Started | ${r.startedAt} |`,
+    `| Baseline | ${r.provisionRequested ? `PROVISIONED (not a clean-machine test), requested: ${r.provisionRequested}` : 'Clean machine; no dependencies installed'} |`,
     '',
   ];
   if (r.shots.length) {
     lines.push('## Screenshots', '');
     for (const s of r.shots) lines.push(`**${s.name}** (${s.width}x${s.height})`, '', `![${s.name}](${rel(s.path)})`, '');
   }
+  if (r.dependencies) lines.push('## Dependency diagnosis (before launch)', '', fence(formatDependencies(r.dependencies)), '');
+  if (r.guestBaseline) lines.push('## Observed guest baseline (before provisioning)', '', fence(JSON.stringify(r.guestBaseline, null, 2)), '');
+  if (r.provisionRequested) lines.push('## Explicit provisioning', '', fence(JSON.stringify(r.provisioned, null, 2)), '');
   if (r.console) {
     lines.push('## Console output', '', fence(r.console.stdout));
     if (r.console.stderr) lines.push('', 'stderr:', '', fence(r.console.stderr));

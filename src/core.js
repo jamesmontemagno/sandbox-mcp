@@ -415,7 +415,9 @@ export async function status() {
   const s = await current();
   if (!s) return { running: false, otherSandboxes: await listSandboxes() };
   const agent = await agentCall(s, 'ping', {}, 5000).then(() => 'ok', (e) => e.message);
-  return { running: true, id: s.id, ip: s.ip, epoch: s.epoch, identity: s.identity, network: s.network, startedAt: s.startedAt, runDir: s.runDir, outDir: path.join(s.runDir, 'out'), agent };
+  const provenance = path.join(s.runDir, 'provisioning.json');
+  const provisioning = fs.existsSync(provenance) ? JSON.parse(fs.readFileSync(provenance, 'utf8')) : undefined;
+  return { running: true, id: s.id, ip: s.ip, epoch: s.epoch, identity: s.identity, network: s.network, startedAt: s.startedAt, runDir: s.runDir, outDir: path.join(s.runDir, 'out'), agent, provisioning };
 }
 
 // ---------- operations ----------

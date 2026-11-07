@@ -63,6 +63,37 @@ install, launch and work on a clean PC, and what does it look like?"* as quickly
 
 ## What you can do
 
+`sbx deps <app.exe|folder>` (MCP: `sandbox_deps`) inspects dependencies on the host without running or installing
+anything: PE architecture/imports, app-local VC++ DLLs, .NET runtime configs, .NET Framework configs, package
+dependencies and script interpreters. `sbx run` includes this diagnosis in its report and names likely missing
+runtimes after a failed launch. This is a conservative static scan, not proof that every dynamic dependency is
+present. Optional guest components such as WebView2 must be checked in the actual guest.
+
+The default never installs dependencies. To **explicitly opt in**, use `sbx run <app> --provision auto`
+(`sandbox_run` parameter `provision: "auto"`), or specify a comma-separated list such as
+`--provision desktop:10.0:x64,vcredist:x64`. Supported components: `dotnet:<version>:<arch>`,
+`desktop:<version>:<arch>`, `aspnetcore:<version>:<arch>`, `vcredist:<arch>` and
+`windows-app-runtime:<major.minor>:<arch>`. Architecture is `x86`, `x64` or `arm64` (explicit lists default
+to x64). `sbx provision <host app path> --provision <auto|list>` / `sandbox_provision` does the same in
+an already-started sandbox; it never starts or adopts a guest. Unknown versions/architectures or unsupported
+auto-provision requests fail explicitly; Java and Python require application-specific setup.
+
+Downloads happen on the **host**, are cached under the sandbox-mcp home `cache\redistributables` folder,
+verified with published SHA-512 hashes for .NET and a valid Microsoft Authenticode signature for every
+installer, then copied in and installed silently. Guest networking can stay **off**. A cached installer
+is reverified before reuse; remove its specific cache file to refresh a mutable VC++/Windows App Runtime
+download. Reports record the requested provisioning, completed installs, source and verification details
+and say **PROVISIONED (not a clean-machine test)**. A provisioned pass never means the original clean machine
+had those runtimes. .NET resolution conservatively stays within the requested major/minor channel and
+honors exact-version requests (`rollForward: Disable` / `applyPatches: false`) rather than silently changing
+the app configuration. A reboot-required installer result fails the run.
+Step-by-step provisioning also writes `provisioning.json` in the run folder and marks `sbx status` /
+`sandbox_status`, so switching clients does not lose the non-clean-machine provenance. This records explicit
+provisioning only, not arbitrary installers a user runs with `exec`. For a live regression, publish a small
+framework-dependent .NET desktop app and run `node test\deps-offline.js <publish folder>` with exclusive use
+of Windows Sandbox. The observed optional-component baseline for build 26100.9882 is recorded in
+`test\fixtures\sandbox-26100.9882.json`; it is evidence for that build, not a promise about future guest images.
+
 - **Clean-machine smoke tests:** does the exe even start without the VC++ runtime / .NET runtime / WebView2 you
   forgot to bundle? `sbx run` tells you, with a screenshot and the crash events.
 - **Test installers and uninstallers:** `sbx install-test setup.msi` installs on a clean machine, uninstalls, and
