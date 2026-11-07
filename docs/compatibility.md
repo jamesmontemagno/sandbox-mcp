@@ -104,6 +104,25 @@ every later byte was tested then. Version 1.2.0 additionally fixes legitimate Wi
 preserving reparse-point confinement; its hosted build checks source/package parity and published ZIP
 verification requires a fresh bundled-runtime offline run as described in [releasing](../RELEASING.md).
 
+### Published v1.2.0 verification
+
+The public release is built from `b5ea2b2348c157581a3991dfc6064f19655e02d5`, not the older matrix SHA.
+[Release build 42348068933](https://github.com/shanselman/sandbox-mcp/actions/runs/42348068933) passed
+97 unit tests and portable package parity/CLI/MCP smoke. The downloaded public
+`sandbox-mcp-win-x64-v1.2.0.zip` (44,919,958 bytes) matched both GitHub's digest and its checksum sidecar:
+`e0fb22207acf904bc1d8fb8da7c990f73554dbb9465c7e87a53c988eed2adecb`.
+`BUILD-INFO.txt` reports that exact source SHA and `Build channel: release`.
+
+On 2026-11-07 UTC, that extracted public ZIP passed the actual offline CLI/MCP integration harness with
+bundled Node and no host Node on PATH: identity/tamper/replay/epoch checks, concurrent commands/copies,
+zero guest network adapters, UIA and screenshot/image response, six complete recording frames and HTML,
+verified incremental deployment/no-change/mutation/deletion/restart, desktop-turn transfer and owned teardown.
+No Sandbox remained and the singleton lock was released. Local evidence is
+`work\public-release-proof\integration\off.json`, `work\evidence\release-public-off.log`, and
+`work\public-release-proof\runs\20261107-064452\out\recordings\0f467ec956cc28a18195ba8f3891e39a\recording.html`.
+The stable agent-setup instructions also downloaded/verified this public ZIP into a temporary home,
+preserved existing configurations on PowerShell 5.1/7 and returned a real MCP `sandbox_status` result.
+
 | Combined check | Observed result |
 |---|---|
 | `node test\integration.js off`, `on`, `firewall` | PASS: real CLI + MCP stdio share one guest, concurrent encrypted exec/copy/readers, identity/tamper/replay/epoch/version rejection, UIA/greeting/PNG, six-frame recording, desktop-turn transfer, incremental deploy/no-change/mutation/delete/restart, owned teardown. |
