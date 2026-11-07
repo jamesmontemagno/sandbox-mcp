@@ -14,10 +14,10 @@ just because the editor is VS Code: modern Copilot sessions can use **Copilot Gl
 - **New-feature candidate:** use the pushed
   [1.2.0 feature branch](https://github.com/shanselman/sandbox-mcp/tree/shanselman-sandbox-feature-integration)
   and its [manual workflow artifacts](https://github.com/shanselman/sandbox-mcp/actions/workflows/release.yml?query=branch%3Ashanselman-sandbox-feature-integration).
-  These are not stable releases. GitHub artifact downloads require an authorized GitHub account. Obtain the
-  successful run ID/commit from the handoff, download `sandbox-mcp-win-x64` with `gh run download <run-id>
-  --repo shanselman/sandbox-mcp --name sandbox-mcp-win-x64 --dir <staging>`, and verify its ZIP against the adjacent
-  `.sha256` file before extraction. If artifact access is unavailable, say so; do not substitute stable invisibly.
+  These are not stable releases. GitHub artifact downloads require an authorized GitHub account. Discover a
+  successful manual run using the candidate block below; freeze that run/commit and verify its artifact before
+  extraction. No private chat handoff is needed. If artifact access is unavailable, say so; do not substitute
+  stable invisibly.
 - **Matching source:** clone with `git clone --branch shanselman-sandbox-feature-integration
   https://github.com/shanselman/sandbox-mcp`, verify the handoff commit, then `npm ci --omit=dev` and
   `npm run package:win` on Windows x64 with Node 20+. Prefer the portable artifact so the user needs no Node install.
@@ -85,12 +85,53 @@ Write-Output "Verified $($release.tag_name) at $Install; SHA256 $expected"
 if ($LASTEXITCODE -notin @(0, 1)) { throw 'doctor failed to return a readiness result.' }
 ```
 
-For a **candidate**, use its handoff's exact workflow run and commit, not `releases/latest`. Require one
-feature-preview ZIP and its `.sha256` file in the downloaded artifact. Validate the checksum format/name,
-compare `Get-FileHash`, and extract into `%LOCALAPPDATA%\sandbox-mcp\candidates\<commit>` without overwriting
-an existing install. `BUILD-INFO.txt` records the source commit and build channel. Check the candidate version
-with `sbx version`, then run `doctor --json` just as above. Checksums verify artifact bytes, not a signed publisher
-attestation; the GitHub repository/run identity still matters.
+For a **candidate**, discover the newest successful manual build of the named branch, not `releases/latest`.
+If the newest branch commit has no successful build, report that the selected artifact represents an older
+commit; do not promise it contains unbuilt changes. This freezes the selected run and verifies the actual
+ZIP, filename, source commit and channel. Missing/expired artifacts are a visible failure.
+
+<!-- setup-test: download-candidate -->
+```powershell
+$ErrorActionPreference = 'Stop'
+Import-Module (Join-Path $PSHOME 'Modules\Microsoft.PowerShell.Utility') -Force
+Import-Module (Join-Path $PSHOME 'Modules\Microsoft.PowerShell.Archive') -Force
+$runs = gh run list --repo shanselman/sandbox-mcp --workflow release.yml `
+    --branch shanselman-sandbox-feature-integration --event workflow_dispatch --status success `
+    --limit 1 --json databaseId,headSha,url | ConvertFrom-Json
+if ($LASTEXITCODE -ne 0 -or @($runs).Count -ne 1) { throw 'No accessible successful candidate build; do not substitute stable.' }
+$run = @($runs)[0]
+if ($run.headSha -notmatch '^[a-f0-9]{40}$') { throw 'Invalid candidate source commit.' }
+$staging = Join-Path $env:TEMP ("sandbox-mcp-candidate-" + [guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Path $staging | Out-Null
+gh run download $run.databaseId --repo shanselman/sandbox-mcp --name sandbox-mcp-win-x64 --dir $staging
+if ($LASTEXITCODE -ne 0) { throw 'Candidate artifact missing, expired or inaccessible.' }
+$zips = @(Get-ChildItem -LiteralPath $staging -Filter '*.zip' -File)
+if ($zips.Count -ne 1) { throw 'Expected exactly one candidate ZIP.' }
+$zip = $zips[0]
+$expectedName = "sandbox-mcp-feature-preview-1.2.0-$($run.headSha.Substring(0,7))-win-x64.zip"
+if ($zip.Name -ne $expectedName) { throw 'Candidate ZIP name does not match selected source/version.' }
+$checksum = Get-Content -LiteralPath "$($zip.FullName).sha256" -Raw
+if ($checksum -notmatch '^([a-fA-F0-9]{64})  ([^\r\n]+)\r?\n?$' -or $Matches[2] -ne $zip.Name) {
+    throw 'Candidate checksum name/format mismatch.'
+}
+$expected = $Matches[1]
+if ((Get-FileHash -LiteralPath $zip.FullName -Algorithm SHA256).Hash -ne $expected) { throw 'Candidate ZIP SHA256 mismatch.' }
+$Install = Join-Path $env:LOCALAPPDATA "sandbox-mcp\candidates\$($run.headSha)"
+if (Test-Path -LiteralPath $Install) { throw "Already installed at $Install; verify/reuse it, do not overwrite." }
+Expand-Archive -LiteralPath $zip.FullName -DestinationPath $Install
+$info = Get-Content -LiteralPath (Join-Path $Install 'BUILD-INFO.txt') -Raw
+if ($info -notmatch "(?m)^Source commit: $($run.headSha)\r?$" -or $info -notmatch '(?m)^Build channel: feature-preview\r?$') {
+    throw 'Candidate source/channel mismatch; do not run it.'
+}
+Write-Output "Verified candidate $($run.headSha) from $($run.url); SHA256 $expected at $Install"
+& (Join-Path $Install 'sbx.cmd') version
+if ($LASTEXITCODE -ne 0) { throw 'Candidate runtime failed.' }
+& (Join-Path $Install 'sbx.cmd') doctor --json
+if ($LASTEXITCODE -notin @(0, 1)) { throw 'doctor failed to return a readiness result.' }
+```
+
+Checksums verify artifact bytes, not a signed publisher attestation; the GitHub repository/run identity
+still matters. Preserve the selected run URL, full SHA and checksum in the setup summary.
 
 ## 4. Register without clobbering existing configuration
 
@@ -134,10 +175,11 @@ function Merge-SandboxMcpConfig {
         throw 'JSONC/comments detected; use the client configuration editor instead.'
     }
     $config = $raw | ConvertFrom-Json
-    if (-not $config -or $config -is [array] -or $config -is [string]) { throw 'Expected a JSON configuration object.' }
+    # Windows PowerShell wraps scalar JSON in PSObject too; require its underlying custom-object type.
+    if ($null -eq $config -or $config.GetType() -ne [System.Management.Automation.PSCustomObject]) { throw 'Expected a JSON configuration object.' }
     if (-not $config.PSObject.Properties[$key]) { $config | Add-Member NoteProperty $key ([pscustomobject]@{}) }
     $servers = $config.$key
-    if (-not $servers -or $servers -is [array] -or $servers -is [string]) { throw 'Expected a server configuration object.' }
+    if ($null -eq $servers -or $servers.GetType() -ne [System.Management.Automation.PSCustomObject]) { throw 'Expected a server configuration object.' }
     if ($servers.PSObject.Properties['windows-sandbox']) {
         $current = $servers.'windows-sandbox'
         if (($current | ConvertTo-Json -Depth 30 -Compress) -eq ($desired | ConvertTo-Json -Depth 30 -Compress)) {

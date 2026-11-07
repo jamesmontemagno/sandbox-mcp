@@ -176,6 +176,7 @@ test('guest manifest and path helpers handle empty directories and reject escape
   const literal = source.replaceAll("'", "''");
   const m = JSON.parse(ps(`$m=Get-DeployManifest '${literal}'; Assert-DeployManifest $m $m; $m | ConvertTo-Json -Depth 5 -Compress`));
   assert.deepEqual(m.directories, ['empty']);
+  assert.equal(m.files[0].path, 'file.txt', 'relative paths remain correct when TEMP uses an 8.3 ancestor spelling');
   assert.equal(m.files[0].sha256, hostManifest(source).files[0].sha256);
   for (const relative of ['..\\escape', 'C:\\escape', 'file.txt:ads', 'a\\..\\b']) {
     assert.match(ps(`try { Join-DeployPath '${literal}' '${relative}'; throw 'accepted invalid path' } catch { $_.Exception.Message }`),

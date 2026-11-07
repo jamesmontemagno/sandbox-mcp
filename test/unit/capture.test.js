@@ -34,4 +34,16 @@ test('capture filenames cannot read or delete an outside tripwire or follow repa
   assert.equal(fs.readFileSync(tripwire, 'utf8'), 'untouched');
   fs.writeFileSync(path.join(directory, 'valid.preview.png'), 'png');
   assert.equal(captureFile(directory, 'valid.preview.png'), path.join(directory, 'valid.preview.png'));
+  assert.throws(() => captureFile(path.join(directory, 'linked', 'screenshots'), 'tripwire.png'), /reparse point/,
+    'a reparse ancestor is rejected, not just the final directory');
+});
+
+test('capture allows legitimate Windows 8.3 directory aliases without treating them as reparse escapes', () => {
+  const short = 'C:\\PROGRA~1';
+  assert.ok(fs.existsSync(short), 'Windows Program Files short alias is required for this Windows-only regression.');
+  const canonical = fs.realpathSync.native(short);
+  assert.notEqual(short.toLowerCase(), canonical.toLowerCase());
+  assert.ok(!fs.lstatSync(short).isSymbolicLink());
+  assert.equal(captureFile(short, 'pending-proof.png'), path.join(short, 'pending-proof.png'));
+  assert.equal(captureFile(canonical, 'pending-proof.png'), path.join(canonical, 'pending-proof.png'));
 });

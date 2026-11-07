@@ -18,17 +18,18 @@ const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'sbx-agent-setup-'));
 let client;
 try {
   let install = process.argv.find((arg) => arg.startsWith('--portable='))?.slice('--portable='.length);
-  if (process.argv.includes('--download')) {
-    const output = execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', snippet('download-stable')], {
+  if (process.argv.includes('--download') || process.argv.includes('--candidate')) {
+    const candidate = process.argv.includes('--candidate');
+    const output = execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', snippet(candidate ? 'download-candidate' : 'download-stable')], {
       env: { ...process.env, LOCALAPPDATA: temporary, TEMP: temporary }, encoding: 'utf8', timeout: 180_000, windowsHide: true,
     });
     console.log(output.trim());
-    const releases = path.join(temporary, 'sandbox-mcp', 'releases');
+    const releases = path.join(temporary, 'sandbox-mcp', candidate ? 'candidates' : 'releases');
     const tags = fs.readdirSync(releases);
     assert.equal(tags.length, 1);
     install = path.join(releases, tags[0]);
   }
-  assert.ok(install, 'Use --download or --portable=<extracted-path>.');
+  assert.ok(install, 'Use --download, --candidate or --portable=<extracted-path>.');
   install = path.resolve(install);
   for (const shell of ['powershell.exe', 'pwsh']) {
     for (const kind of ['copilot-global', 'vscode-local', 'claude']) {
@@ -60,6 +61,11 @@ try {
       fs.writeFileSync(config, commented);
       assert.throws(() => execFileSync(shell, ['-NoProfile', '-NonInteractive', '-Command', command], { stdio: 'pipe', timeout: 30_000, windowsHide: true }));
       assert.equal(fs.readFileSync(config, 'utf8'), commented, 'JSONC must be retained for a native client edit');
+      for (const malformed of ['true', '42', JSON.stringify({ [key]: true }), JSON.stringify({ [key]: 42 })]) {
+        fs.writeFileSync(config, malformed);
+        assert.throws(() => execFileSync(shell, ['-NoProfile', '-NonInteractive', '-Command', command], { stdio: 'pipe', timeout: 30_000, windowsHide: true }));
+        assert.equal(fs.readFileSync(config, 'utf8'), malformed, 'malformed scalar configuration must not be rewritten');
+      }
       console.log(`${shell} ${kind}: preserved settings/server, backup, idempotence and replacement refusal PASS`);
     }
   }

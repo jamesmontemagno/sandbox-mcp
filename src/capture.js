@@ -5,12 +5,18 @@ export function captureFile(directory, name) {
   if (typeof name !== 'string' || !/^[a-z0-9][a-z0-9._-]*\.png$/i.test(name) ||
       /^(con|prn|aux|nul|com[0-9]|lpt[0-9])\./i.test(name)) throw new Error('Invalid screenshot PNG leaf name.');
   const file = path.resolve(directory, name);
-  for (const candidate of [path.resolve(directory), file]) {
-    if (!fs.existsSync(candidate)) continue;
-    if (fs.lstatSync(candidate).isSymbolicLink() ||
-        fs.realpathSync.native(candidate).toLowerCase() !== candidate.toLowerCase()) {
+  let candidate = file;
+  while (true) {
+    if (fs.existsSync(candidate) && fs.lstatSync(candidate).isSymbolicLink()) {
       throw new Error('Screenshot path escapes its evidence directory through a reparse point.');
     }
+    const parent = path.dirname(candidate);
+    if (parent === candidate) break;
+    candidate = parent;
+  }
+  if (fs.existsSync(file) && fs.realpathSync.native(file).toLowerCase() !==
+      path.join(fs.realpathSync.native(directory), name).toLowerCase()) {
+    throw new Error('Screenshot path escapes its evidence directory through a reparse point.');
   }
   if (fs.existsSync(file) && !fs.statSync(file).isFile()) throw new Error('Screenshot is not a regular PNG file.');
   return file;

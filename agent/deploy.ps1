@@ -45,7 +45,10 @@ function Join-DeployPath([string]$root, [string]$relative) {
 function Get-DeployManifest([string]$root) {
     $files = @(); $directories = @()
     if (Test-Path -LiteralPath $root) {
-        if (-not (Get-Item -LiteralPath $root -Force).PSIsContainer) { throw "Destination is not a directory: $root" }
+        Assert-DeployPath $root
+        $item = Get-Item -LiteralPath $root -Force
+        if (-not $item.PSIsContainer) { throw "Destination is not a directory: $root" }
+        $root = $item.FullName.TrimEnd('\')
         $stack = New-Object 'Collections.Generic.Stack[string]'
         $stack.Push($root)
         while ($stack.Count) {
