@@ -129,6 +129,26 @@ test('deleted source files fail as dirty, not as a partial apply', (t) => {
     /build output changed during deploy; rerun/);
 });
 
+test('deploy pins the captured boot generation across manifest, staging and apply', async (t) => {
+  const { root, source } = fixture(t);
+  fs.writeFileSync(path.join(source, 'file'), 'data');
+  const target = { id: 'same-provider-id', epoch: 'original-boot', runDir: root };
+  let captures = 0;
+  const calls = [];
+  await deployDirectory({ hostPath: source }, {
+    checkAllowed() {},
+    getSandbox: async () => { captures++; return target; },
+    call: async (op, params, timeout, pinned) => {
+      assert.equal(pinned, target);
+      assert.equal(pinned.epoch, 'original-boot');
+      calls.push(op);
+      return op === 'deploy_manifest' ? { files: [], directories: [] } : { verified: true, stopped: [] };
+    },
+  });
+  assert.equal(captures, 1);
+  assert.deepEqual(calls, ['deploy_manifest', 'deploy_apply']);
+});
+
 test('allowed-root denial happens before scanning or contacting the sandbox', async () => {
   await assert.rejects(deployDirectory({ hostPath: 'not-allowed' }, {
     checkAllowed: () => { throw new Error('outside SANDBOX_MCP_ALLOWED_ROOTS'); },

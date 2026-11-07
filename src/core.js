@@ -247,8 +247,8 @@ async function fileCall(target, op, params, timeoutMs, framer) {
   throw Object.assign(new Error(`agent '${op}' timed out after ${timeoutMs}ms`), { code: 'ETIMEDOUT' });
 }
 
-async function call(op, params = {}, timeoutMs = 60_000) {
-  const s = await requireSandbox();
+async function call(op, params = {}, timeoutMs = 60_000, target) {
+  const s = target || await requireSandbox();
   const t = Date.now();
   try {
     const mutates = ['launch', 'click', 'keys', 'uiaction'].includes(op) ||
@@ -439,13 +439,13 @@ export async function copyIn(hostPath, sandboxPath) {
   const seq = updateState(s, (st) => ++st.seq);
   const stage = `${seq}-${base}`; // fresh folder each time avoids the guest's stale directory cache
   fs.cpSync(src, path.join(s.runDir, 'in', stage), { recursive: true });
-  return call('copy', { from: `${GUEST.in}\\${stage}`, to: sandboxPath || `C:\\apps\\${base}` }, 600_000);
+  return call('copy', { from: `${GUEST.in}\\${stage}`, to: sandboxPath || `C:\\apps\\${base}` }, 600_000, s);
 }
 
 export async function copyOut(sandboxPath, name) {
   const s = await requireSandbox();
   const n = (name || sandboxPath.split(/[\\/]/).filter(Boolean).pop() || 'item').replace(/[:*?"<>|]/g, '_');
-  const r = await call('copy', { from: sandboxPath, to: `${GUEST.out}\\files\\${n}` }, 600_000);
+  const r = await call('copy', { from: sandboxPath, to: `${GUEST.out}\\files\\${n}` }, 600_000, s);
   return { hostPath: path.join(s.runDir, 'out', 'files', n), files: r.files, bytes: r.bytes };
 }
 
@@ -467,7 +467,7 @@ export async function windows() { return [].concat((await call('windows')) ?? []
 
 export async function screenshot({ windowTitle, pid, name, maxWidth } = {}) {
   const s = await requireSandbox();
-  const r = await call('screenshot', { windowTitle, pid, name, maxWidth });
+  const r = await call('screenshot', { windowTitle, pid, name, maxWidth }, 60_000, s);
   const dir = path.join(s.runDir, 'out', 'screenshots');
   const previewPath = path.join(dir, r.preview);
   const preview = await waitFor(() => fs.existsSync(previewPath) && fs.readFileSync(previewPath), 10_000, 'screenshot file');

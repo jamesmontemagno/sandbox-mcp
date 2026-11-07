@@ -111,7 +111,7 @@ export async function deployDirectory({ hostPath, sandboxPath, launch, args, res
   const destination = sandboxPath || `C:\\apps\\${path.basename(source)}`;
   const manifest = hostManifest(source);
   const s = await driver.getSandbox();
-  const before = await driver.call('deploy_manifest', { destination }, 600_000);
+  const before = await driver.call('deploy_manifest', { destination }, 600_000, s);
   const delta = diffManifests(before, manifest);
   const stageName = `deploy-${randomUUID()}`, stage = path.join(s.runDir, 'in', stageName);
   try {
@@ -120,7 +120,7 @@ export async function deployDirectory({ hostPath, sandboxPath, launch, args, res
       destination, from: `C:\\sbx\\in\\${stageName}`, manifest, before,
       changed: [...delta.added, ...delta.changed], removed: delta.removed,
       restart, launch, args,
-    }, 600_000);
+    }, 600_000, s);
     if (result?.verified !== true) throw new Error('Guest did not confirm deployment hash verification');
     return { path: destination, added: delta.added.length, changed: delta.changed.length, removed: delta.removed.length,
       unchanged: delta.unchanged.length, bytesTransferred: [...delta.added, ...delta.changed].reduce((n, f) => n + f.size, 0),
