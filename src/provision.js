@@ -57,6 +57,8 @@ export function planProvision(scan, requested) {
         if (war) items.push({ component: 'Windows App Runtime', version: war[1], architecture: r.architecture || 'unknown' });
         else if (r.component === 'Windows App Runtime' && r.status !== 'app-local') {
           throw new Error('Windows App Runtime version cannot be inferred. Pass --provision windows-app-runtime:<major.minor>:<architecture> explicitly.');
+        } else if (r.status === 'unknown') {
+          throw new Error(`Cannot auto-provision an unknown requirement: ${r.component}. ${r.remediation}`);
         }
       }
     }

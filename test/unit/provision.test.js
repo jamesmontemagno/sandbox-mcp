@@ -26,6 +26,10 @@ test('auto combines desktop/core bundle but does not hide unsupported missing de
 });
 test('auto refuses ambiguous Windows App Runtime bootstrap version', () => {
   assert.throws(() => planProvision({ requirements: [{ component: 'Windows App Runtime', status: 'unknown' }] }, 'auto'), /cannot be inferred/);
+  assert.throws(() => planProvision({ requirements: [{ component: 'Packaged application dependencies', status: 'unknown',
+    remediation: 'Inspect the package manifest.' }] }, 'auto'), /unknown requirement/);
+  assert.throws(() => planProvision({ requirements: [{ component: '.NET Framework', version: '4.8.1', status: 'unknown',
+    remediation: 'Verify the actual guest.' }] }, 'auto'), /unknown requirement/);
 });
 test('auto preserves exact requirements regardless of scan order and rejects conflicting bundle policies', () => {
   const exact = { ...core, rollForward: 'Disable', applyPatches: false };
