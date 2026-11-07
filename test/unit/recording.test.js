@@ -6,7 +6,7 @@ import path from 'node:path';
 import vm from 'node:vm';
 import { execFileSync, spawn } from 'node:child_process';
 import { recordingOptions, parseFrames, renderFlipbook, publishRecording, clearRecording, reserveRecording, releaseEmptyRecording } from '../../src/recording.js';
-import { renderReport } from '../../src/run.js';
+import { renderReport, runFailures } from '../../src/run.js';
 
 const frame = { file: 'frame-000000.png', timestamp: '2026-11-07T01:00:00Z', elapsedMs: 120,
   left: -100, top: 0, width: 100, height: 100, imageWidth: 100, imageHeight: 100, scale: 1,
@@ -221,4 +221,7 @@ test('run report links recording artifacts', () => {
   const report = renderReport(r);
   assert.match(report, /\[Self-contained HTML flipbook\]\(recording.html\)/);
   assert.match(report, /\[MP4 video\]\(recording.mp4\)/);
+  assert.deepEqual(runFailures({ recordingError: 'publication denied', recording: { stopped: false, partial: true } }), [
+    'recording: publication denied', 'recorder did not stop; partial evidence retained', 'recording is partial (see recording warnings)',
+  ]);
 });

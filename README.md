@@ -393,6 +393,8 @@ MP4 uses the requested frame rate; the HTML player preserves captured timestamps
 The run report links the artifacts. `sbx stop` also publishes any tracked recording before destroying the guest.
 Only one recording can be reserved across CLI/MCP clients. Tracking is bound to the boot epoch and recording ID;
 failed publication retains recovery metadata so `sbx record stop` can retry without touching a replacement guest.
+Rejected starts release a zero-frame reservation only after confirming that its recorder cannot still be active;
+uncertain starts retain tracking and report the error explicitly.
 Guest-returned screenshot filenames are checked as confined PNG leaf paths before host reads or cleanup.
 After a guest crash or abrupt MCP disconnect, `sbx record stop` can still publish the preserved partial evidence,
 even if `sbx status` already noticed the guest is gone. Truncated final recorder status is reported as partial,

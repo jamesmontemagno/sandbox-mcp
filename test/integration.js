@@ -25,7 +25,7 @@ const record = (name, detail) => {
 };
 const save = () => fs.writeFileSync(path.join(evidenceDir, `${network}.json`), JSON.stringify(evidence, null, 2));
 async function cli(...args) {
-  const { stdout } = await execute(process.execPath, [path.join(runtimeRoot, 'src', 'cli.js'), ...args, '--json'], {
+  const { stdout } = await execute(process.execPath, [path.join(runtimeRoot, 'src', 'cli.js'), args[0], '--json', ...args.slice(1)], {
     cwd: runtimeRoot, timeout: 600_000, maxBuffer: 8 * 1024 * 1024, windowsHide: true,
   });
   return JSON.parse(stdout);
