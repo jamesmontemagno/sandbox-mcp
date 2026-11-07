@@ -11,7 +11,7 @@ import { atomicJson, readJson, withStateLock, retryFile, createDesktop } from '.
 import { deployDirectory } from './deploy.js';
 import { PROTOCOL_VERSION, STALE_BOOT, agentHash, createFramer } from './protocol.js';
 import { mapCapturePoint, captureFile } from './capture.js';
-import { recordingOptions, publishRecording, reserveRecording, clearRecording } from './recording.js';
+import { recordingOptions, publishRecording, reserveRecording, clearRecording, releaseEmptyRecording } from './recording.js';
 
 export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 export const VERSION = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version;
@@ -218,7 +218,7 @@ function agentCall(target, op, params = {}, timeoutMs = 60_000) {
     sock.on('end', () => {
       let r;
       try { r = framer.open(JSON.parse(buf.trim()), 'response', counter); } catch (e) { e.fatal = true; return reject(e); }
-      r.ok ? resolve(r.result) : reject(new Error(r.error));
+      r.ok ? resolve(r.result) : reject(Object.assign(new Error(r.error), { guestRejected: true }));
     });
   });
 }
@@ -246,7 +246,7 @@ async function fileCall(target, op, params, timeoutMs, framer) {
       try { r = JSON.parse(retryFile(() => fs.readFileSync(respFile, 'utf8')).replace(/^\uFEFF/, '')); } catch (e) { e.fatal = true; throw e; }
       try { r = framer.open(r, 'response', counter); } catch (e) { e.fatal = true; throw e; }
       fs.rmSync(respFile, { force: true }); fs.rmSync(reqFile, { force: true });
-      return r.ok ? r.result : Promise.reject(new Error(r.error));
+      return r.ok ? r.result : Promise.reject(Object.assign(new Error(r.error), { guestRejected: true }));
     }
     await sleep(50);
   }
@@ -506,8 +506,16 @@ export async function recordStart(options = {}, target) {
   const recordingId = randomBytes(16).toString('hex');
   const directory = path.join(s.runDir, 'out', 'recordings', recordingId);
   reserveRecording(HOME, s, { recordingId, directory, ...limits });
-  const result = await call('recordstart', { recordingId, ...limits }, 30_000, s);
-  return { ...result, recordingId, directory };
+  try {
+    const result = await call('recordstart', { recordingId, ...limits }, 30_000, s);
+    return { ...result, recordingId, directory };
+  } catch (e) {
+    if (e.guestRejected) {
+      try { await recordStop({ recordingId, target: s }); }
+      catch (recovery) { e.message += `; recording recovery: ${recovery.message}`; }
+    }
+    throw e;
+  }
 }
 
 export async function recordStop({ recordingId, target } = {}) {
@@ -521,8 +529,14 @@ export async function recordStop({ recordingId, target } = {}) {
   let stopped = true;
   if (state?.id === s.id && state?.epoch === s.epoch && (await listSandboxes()).includes(s.id)) {
     try { await call('recordstop', { recordingId: recording.recordingId }, 20_000, state); }
-    catch (e) { stopped = false; warnings.push(`Could not stop guest recorder: ${e.message}`); }
+    catch (e) {
+      stopped = !!(e.guestRejected && e.message === 'No matching recording in this agent.');
+      warnings.push(`Could not stop guest recorder: ${e.message}`);
+    }
   } else warnings.push('Sandbox is no longer running; publishing preserved partial evidence.');
+  if (releaseEmptyRecording(HOME, s, recording, stopped)) {
+    throw new Error('Recording captured no complete frames; confirmed inactive reservation released. Raw evidence retained.');
+  }
   const result = await publishRecording(recording.directory, recording.fps);
   if (stopped) clearRecording(HOME, s, recording.recordingId);
   return { recordingId: recording.recordingId, stopped, ...result, warnings: [...warnings, ...result.warnings] };

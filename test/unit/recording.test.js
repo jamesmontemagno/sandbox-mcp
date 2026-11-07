@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import vm from 'node:vm';
 import { execFileSync, spawn } from 'node:child_process';
-import { recordingOptions, parseFrames, renderFlipbook, publishRecording, clearRecording } from '../../src/recording.js';
+import { recordingOptions, parseFrames, renderFlipbook, publishRecording, clearRecording, reserveRecording, releaseEmptyRecording } from '../../src/recording.js';
 import { renderReport } from '../../src/run.js';
 
 const frame = { file: 'frame-000000.png', timestamp: '2026-11-07T01:00:00Z', elapsedMs: 120,
@@ -168,6 +168,48 @@ test('recording reservations are atomic and cleanup preserves counters and repla
   fs.writeFileSync(stateFile, JSON.stringify(replacement));
   clearRecording(dir, target, state.recording.recordingId);
   assert.deepEqual(JSON.parse(fs.readFileSync(stateFile, 'utf8')), replacement);
+});
+
+test('a guest-rejected zero-frame start releases only a confirmed inactive reservation', (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sbx-recording-rejected-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const fakeWsb = path.join(dir, 'wsb.exe').replace(/'/g, "''");
+  execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command',
+    `Add-Type -OutputAssembly '${fakeWsb}' -OutputType ConsoleApplication -TypeDefinition 'public class FakeWsb { public static void Main() { System.Console.WriteLine("{\\"WindowsSandboxEnvironments\\":[{\\"Id\\":\\"guest\\"}]}"); } }'`],
+  { windowsHide: true });
+  const core = new URL('../../src/core.js', import.meta.url).href;
+  const protocol = new URL('../../src/protocol.js', import.meta.url).href;
+  const code = `import fs from 'node:fs'; import path from 'node:path'; import net from 'node:net'; import assert from 'node:assert/strict';
+    import {createFramer} from ${JSON.stringify(protocol)}; import * as sbx from ${JSON.stringify(core)};
+    const key='aa'.repeat(32), framer=createFramer(key,'boot');
+    const server=net.createServer(socket=>{ let data=''; socket.on('data',chunk=>{
+      data+=chunk; if(!data.includes('\\n')) return;
+      const frame=JSON.parse(data), request=framer.open(frame,'request');
+      const error=request.op==='recordstart'?'desktop not interactive':'No matching recording in this agent.';
+      socket.end(JSON.stringify(framer.seal({ok:false,error},'response',frame.counter))+'\\n');
+    }); });
+    await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+    const target={id:'guest',epoch:'boot',protocolSeq:0,runDir:sbx.HOME,identity:{protocolVersion:2},
+      ip:'127.0.0.1',port:server.address().port};
+    fs.mkdirSync(path.join(sbx.HOME,'agent')); fs.writeFileSync(path.join(sbx.HOME,'agent','token.txt'),key);
+    fs.writeFileSync(path.join(sbx.HOME,'current.json'),JSON.stringify(target));
+    try { for(let i=0;i<2;i++) {
+      await assert.rejects(sbx.recordStart({},target),/desktop not interactive.*confirmed inactive reservation released/);
+      assert.ok(!fs.existsSync(path.join(sbx.HOME,'recording.json')));
+      assert.ok(!JSON.parse(fs.readFileSync(path.join(sbx.HOME,'current.json'),'utf8')).recording);
+    } assert.equal(JSON.parse(fs.readFileSync(path.join(sbx.HOME,'current.json'),'utf8')).protocolSeq,4);
+    } finally { await new Promise(resolve=>server.close(resolve)); }`;
+  execFileSync(process.execPath, ['--input-type=module', '-e', code], {
+    env: { ...process.env, SANDBOX_MCP_HOME: dir, PATH: dir }, encoding: 'utf8', windowsHide: true, timeout: 15_000,
+  });
+  const target = { id: 'guest', epoch: 'boot' };
+  const recording = { recordingId: 'uncertain', directory: path.join(dir, 'frames') };
+  reserveRecording(dir, target, recording);
+  assert.equal(releaseEmptyRecording(dir, target, recording, false), false);
+  assert.ok(fs.existsSync(path.join(dir, 'recording.json')), 'uncertain starts must retain recovery');
+  fs.mkdirSync(recording.directory);
+  fs.writeFileSync(path.join(recording.directory, 'frames.jsonl'), JSON.stringify(frame) + '\n');
+  assert.equal(releaseEmptyRecording(dir, target, recording, true), false, 'a real frame with a missing PNG must remain recoverable');
 });
 test('run report links recording artifacts', () => {
   const dir = path.join(os.tmpdir(), 'sbx-report');

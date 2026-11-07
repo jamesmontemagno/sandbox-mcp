@@ -26,7 +26,19 @@ export function clearRecording(home, target, recordingId) {
       if (name === 'recording.json') fs.rmSync(file);
       else { delete state.recording; atomicJson(file, state); }
     }
+
   });
+}
+
+export function releaseEmptyRecording(home, target, recording, confirmedStopped) {
+  if (!confirmedStopped) return false;
+  const manifest = path.join(recording.directory, 'frames.jsonl');
+  let text;
+  try { text = fs.readFileSync(manifest, 'utf8'); }
+  catch (e) { if (e.code !== 'ENOENT') throw e; text = ''; }
+  if (parseFrames(text).frames.length) return false;
+  clearRecording(home, target, recording.recordingId);
+  return true;
 }
 
 export function recordingOptions({ fps = 2, maxDurationSec = 120, maxFrames = Math.min(600, fps * maxDurationSec) } = {}) {
