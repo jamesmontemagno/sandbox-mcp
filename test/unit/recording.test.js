@@ -210,6 +210,13 @@ test('a guest-rejected zero-frame start releases only a confirmed inactive reser
   fs.mkdirSync(recording.directory);
   fs.writeFileSync(path.join(recording.directory, 'frames.jsonl'), JSON.stringify(frame) + '\n');
   assert.equal(releaseEmptyRecording(dir, target, recording, true), false, 'a real frame with a missing PNG must remain recoverable');
+  const manifest = path.join(recording.directory, 'frames.jsonl');
+  const fd = fs.openSync(manifest, 'r+');
+  try { fs.ftruncateSync(fd, 8 * 1024 * 1024 + 1); }
+  finally { fs.closeSync(fd); }
+  assert.throws(() => releaseEmptyRecording(dir, target, recording, true), /manifest too large; recovery retained/);
+  assert.ok(fs.existsSync(path.join(dir, 'recording.json')));
+  assert.equal(fs.statSync(manifest).size, 8 * 1024 * 1024 + 1);
 });
 test('run report links recording artifacts', () => {
   const dir = path.join(os.tmpdir(), 'sbx-report');

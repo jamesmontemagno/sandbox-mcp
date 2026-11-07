@@ -4,6 +4,7 @@ import { execFile } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { atomicJson, readJson, withStateLock } from './coordination.js';
 import { STALE_BOOT } from './protocol.js';
+const MAX_MANIFEST_BYTES = 8 * 1024 * 1024;
 
 export function reserveRecording(home, target, recording) {
   return withStateLock(home, () => {
@@ -34,7 +35,10 @@ export function releaseEmptyRecording(home, target, recording, confirmedStopped)
   if (!confirmedStopped) return false;
   const manifest = path.join(recording.directory, 'frames.jsonl');
   let text;
-  try { text = fs.readFileSync(manifest, 'utf8'); }
+  try {
+    if (fs.statSync(manifest).size > MAX_MANIFEST_BYTES) throw new Error(`Recording manifest too large; recovery retained at ${recording.directory}.`);
+    text = fs.readFileSync(manifest, 'utf8');
+  }
   catch (e) { if (e.code !== 'ENOENT') throw e; text = ''; }
   if (parseFrames(text).frames.length) return false;
   clearRecording(home, target, recording.recordingId);
@@ -168,7 +172,7 @@ document.getElementById('warning').textContent=data.warnings.join(' ');show();
 export async function publishRecording(directory, fps = 2) {
   const manifest = path.join(directory, 'frames.jsonl');
   if (!fs.existsSync(manifest)) throw new Error(`No recording frames; partial evidence retained at ${directory}.`);
-  if (fs.statSync(manifest).size > 8 * 1024 * 1024) throw new Error(`Recording manifest too large; retained at ${directory}.`);
+  if (fs.statSync(manifest).size > MAX_MANIFEST_BYTES) throw new Error(`Recording manifest too large; retained at ${directory}.`);
   const { frames, warnings } = parseFrames(fs.readFileSync(manifest, 'utf8'));
   if (!frames.length) throw new Error(`No complete recording frames; evidence retained at ${directory}.`);
   const statusPath = path.join(directory, 'status.json');
