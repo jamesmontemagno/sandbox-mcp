@@ -48,6 +48,11 @@ no winget. It has Windows PowerShell 5.1 and .NET Framework 4.8. Treat it like a
   for MCP or `SANDBOX_MCP_WORKFLOW`); observations and `exec` do not reserve the desktop. Use
   `sandbox_desktop_release` / `sbx desktop-release` when done with a turn. A competing workflow waits up to
   60 seconds before a clear desktop-busy error. Do not use `exec` to bypass a turn for UI input.
+- For a warm build/deploy/relaunch loop, start once and use `sandbox_deploy` with `hostPath`, optional `sandboxPath`,
+  `launch: "MyApp.exe"` and `restart: true` (`sbx deploy <hostDir> [guestDir] --launch MyApp.exe --restart`).
+  It hashes the source and destination, transfers only changed files, removes deleted files and verifies every hash.
+  Use a dedicated guest directory (extra guest files are deleted); rebuild only before the deploy, not during it.
+  This is explicit reuse of your running sandbox, not a clean-machine test. `sandbox_copy_in` remains full replacement.
 
 - If a tool says "Windows Sandbox isn't ready on this PC", pass its fix list on to the user (it usually needs an
   admin command and a restart); don't try to work around it. `sbx doctor` re-checks.

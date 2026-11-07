@@ -52,6 +52,8 @@ Step by step
   status
   desktop-release                    Release this workflow's desktop turn (SANDBOX_MCP_WORKFLOW)
   push <host path> [sandbox path]    Copy a file/folder in (default C:\\apps\\<name>)
+  deploy <hostDir> [guestDir] [--launch <exe>] [--args "<args>"] [--restart]
+                                     Verified incremental copy into a warm sandbox; restart stops apps under guestDir
   pull <sandbox path> [name]         Copy a file/folder out to the run's out\\files folder
   exec [--cmd] [--cwd <dir>] [--timeout <sec>] <command...>
                                      Run a command; prints its output and exits with its exit code
@@ -89,7 +91,7 @@ Data: ${sbx.HOME}`;
 
 // Options that take a value; everything else starting with -- is a boolean flag.
 const VALUE_OPTS = new Set(['network', 'memory', 'exe', 'args', 'wait', 'test', 'collect', 'cwd', 'timeout', 'window', 'pid', 'name', 'since',
-  'id', 'type', 'index', 'value', 'depth', 'max', 'uninstall', 'uninstall-args', 'exclude', 'duration', 'every']);
+  'id', 'type', 'index', 'value', 'depth', 'max', 'uninstall', 'uninstall-args', 'exclude', 'duration', 'every', 'launch']);
 const REPEAT_OPTS = new Set(['collect', 'exclude']);
 
 function parse(argv) {
@@ -183,6 +185,13 @@ async function main(argv) {
       out(opt, await sbx.stopSandbox({ force: !!opt.force }), (r) =>
         r.stopped.length ? `Stopped ${r.stopped.join(', ')}.${r.outDir ? ` Artifacts: ${r.outDir}` : ''}` : 'Nothing to stop.');
       return 0;
+
+    case 'deploy': {
+      need(1, 'deploy <hostDir> [guestDir] [--launch <exe>] [--args "<args>"] [--restart]');
+      out(opt, await sbx.deploy({ hostPath: pos[0], sandboxPath: pos[1], launch: opt.launch, args: opt.args, restart: !!opt.restart }),
+        (r) => `${r.added} added, ${r.changed} changed, ${r.removed} removed, ${r.unchanged} unchanged; ${r.bytesTransferred} bytes transferred in ${r.ms}ms; verified=${r.verified} -> ${r.path}`);
+      return 0;
+    }
 
     case 'push': {
       need(1, 'push <host path> [sandbox path]');

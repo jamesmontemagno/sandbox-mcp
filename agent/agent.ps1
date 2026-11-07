@@ -233,6 +233,8 @@ function Op-Diff($req) {
     [SbxSnap]::Diff($a, $b, [int](Get-Opt $req.max 200))
 }
 
+. "$PSScriptRoot\deploy.ps1"
+
 function Invoke-Request([string]$line) {
     $resp = try {
         $req = $line | ConvertFrom-Json
@@ -243,6 +245,8 @@ function Invoke-Request([string]$line) {
             'launch'     { Op-Launch $req }
             'process'    { Op-Process $req }
             'copy'       { Op-Copy $req }
+            'deploy_manifest' { Op-DeployManifest $req }
+            'deploy_apply' { Op-DeployApply $req }
             'screenshot' { Op-Screenshot $req }
             'windows'    { , (Op-Windows $req) }
             'click'      { Op-Click $req }

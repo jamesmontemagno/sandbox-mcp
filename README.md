@@ -227,6 +227,33 @@ screenshot."*
 There's also an agent skill in [`skills/windows-sandbox-app-test`](skills/windows-sandbox-app-test/SKILL.md) that
 teaches agents the workflow; copy it into your agent's skills folder (for example `~/.copilot/skills/`).
 
+## Fast inner loop
+
+Start once, then build and deploy repeatedly into that **warm** sandbox (any framework, no guest prerequisites
+installed implicitly):
+
+```powershell
+sbx start --network off
+powershell -File .\samples\HelloSandbox\build.ps1
+sbx deploy .\samples\HelloSandbox\bin C:\apps\HelloSandbox --launch HelloSandbox.exe --restart
+sbx shot --window HelloSandbox
+# Edit, build, deploy --restart, screenshot again; when done:
+sbx stop
+```
+
+`deploy` transfers only added/changed files through a fresh shared staging folder, removes deleted files, and verifies
+the entire destination using SHA256. Its report includes added/changed/removed/unchanged counts, bytes transferred,
+elapsed milliseconds and `verified: true`. `--restart` stops processes whose executable is under the destination before
+applying and requires `--launch` to relaunch the app; `--launch` alone launches after verification. Arguments use
+`--args "..."`. TCP and network-off shared-folder transport both work.
+
+Use a dedicated destination: **extra guest files there are deleted**. Links, junctions and reparse points are rejected.
+If a build changes while staging, deployment fails with `build output changed during deploy; rerun` before touching the
+destination. Apply/verification failures restore the previous touched files where possible; rollback failures explicitly
+identify the retained guest backup. Stopped processes are not automatically restarted after a failed apply.
+`push` / `sandbox_copy_in` still perform a full replacement. `run`, `install-test` and `detonate` still start fresh;
+incremental deployment never adopts an unrelated sandbox.
+
 ## MCP tools
 
 | Tool | What it does |
@@ -237,6 +264,7 @@ teaches agents the workflow; copy it into your agent's skills folder (for exampl
 | `sandbox_desktop_release` | End this workflow's desktop turn immediately. |
 | `sandbox_stop` | Destroy it. Lists the artifacts left on the host. |
 | `sandbox_copy_in` | Copy a host file or folder in (default `C:\apps\<name>`). |
+| `sandbox_deploy` | Deploy a host directory into an already running sandbox, transfer only changes and verify hashes; optional launch/restart. |
 | `sandbox_copy_out` | Copy a sandbox file or folder out to the run's `out\files`. |
 | `sandbox_exec` | Run a PowerShell (or `cmd`) command; returns stdout, stderr, exit code. |
 | `sandbox_launch` | Start a GUI app without waiting; returns pid and main window. |
@@ -264,6 +292,7 @@ sbx detonate <file> [--args "<args>"] [--network off|firewall|on] [--duration <s
 
 sbx start [--network on|firewall|off] [--memory <MB>] [--no-gpu] [--minimized]
 sbx push <host path> [sandbox path]          sbx pull <sandbox path> [name]
+sbx deploy <hostDir> [guestDir] [--launch <exe>] [--args "..."] [--restart]
 sbx exec [--cmd] [--cwd <dir>] <command...>  sbx launch <exe> [--args "..."]
 sbx shot [--window <title>|--pid <pid>]      sbx windows   sbx proc <pid>
 sbx ui [tree] [--pid <pid>]                  sbx ui click --name Save

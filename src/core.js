@@ -8,6 +8,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { atomicJson, readJson, withStateLock, retryFile, createDesktop } from './coordination.js';
+import { deployDirectory } from './deploy.js';
 
 export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 export const VERSION = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version;
@@ -430,6 +431,10 @@ export async function copyOut(sandboxPath, name) {
   const n = (name || sandboxPath.split(/[\\/]/).filter(Boolean).pop() || 'item').replace(/[:*?"<>|]/g, '_');
   const r = await call('copy', { from: sandboxPath, to: `${GUEST.out}\\files\\${n}` }, 600_000);
   return { hostPath: path.join(s.runDir, 'out', 'files', n), files: r.files, bytes: r.bytes };
+}
+
+export async function deploy(options) {
+  return deployDirectory(options, { getSandbox: requireSandbox, checkAllowed, call });
 }
 
 export async function exec({ command, shell, cwd, timeoutSec = 120 }) {

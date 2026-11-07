@@ -73,6 +73,19 @@ server.registerTool('sandbox_copy_in', {
   },
 }, tool(async ({ hostPath, sandboxPath }) => text(await sbx.copyIn(hostPath, sandboxPath))));
 
+server.registerTool('sandbox_deploy', {
+  title: 'Deploy changed build output',
+  description: 'Explicit warm-sandbox inner loop: transfer only added/changed files, delete removed files, verify all destination SHA256 hashes. ' +
+    'Requires an already running sandbox. Rejects links/reparse points and build output that changes while staging. copy_in still does a full replace.',
+  inputSchema: {
+    hostPath: z.string().describe('Host build output directory (must be under SANDBOX_MCP_ALLOWED_ROOTS when set).'),
+    sandboxPath: z.string().optional().describe('Exclusive deployment directory; extra guest files are removed. Default C:\\apps\\<name>.'),
+    launch: z.string().optional().describe('Executable inside the destination, relative or absolute, to launch after verification.'),
+    args: z.string().optional(),
+    restart: z.boolean().optional().describe('Stop processes whose image path is under the destination before applying; requires launch.'),
+  },
+}, tool(async (a) => text(await sbx.deploy(a))));
+
 server.registerTool('sandbox_copy_out', {
   title: 'Copy out of sandbox',
   description: 'Copy a file or folder from the sandbox back to the host (into the run outDir/files). Returns the host path.',
