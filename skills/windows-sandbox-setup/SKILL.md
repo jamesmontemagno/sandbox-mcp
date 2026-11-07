@@ -21,6 +21,8 @@ If `sbx` isn't on PATH (the plugin only adds MCP tools), use:
 npx --yes --package=github:shanselman/sandbox-mcp sbx doctor
 ```
 
+To install the portable package with its bundled Node.js and verified download, follow [the agent setup guide](https://raw.githubusercontent.com/shanselman/sandbox-mcp/main/docs/agent-setup.md). It asks before admin changes or a restart.
+
 Exit code 0 means ready. Exit code 1 lists each problem with its `Fix:` line; add `--json` for structured output. `sandbox_start` and the one-shot tools report the same list when they fail with "Windows Sandbox isn't ready on this PC".
 
 ## Fix what it reports
@@ -43,7 +45,7 @@ The plugin starts the server with `cmd /d /c npx --yes github:shanselman/sandbox
 
 ## If a sandbox is already running
 
-Windows allows one sandbox at a time. Check with `sandbox_status`. If it's yours, call `sandbox_stop`. If it wasn't started by sandbox-mcp, it may hold the user's work: ask before calling `sandbox_stop` with `force: true`.
+Windows allows one sandbox at a time. Check with `sandbox_status`. Stop only a guest you own, with `sandbox_stop`. If you don't own it, it may hold someone's work, so ask its owner or the user rather than interrupting it. Only with their approval, call `sandbox_stop` with `force: true`.
 
 ## Settings
 

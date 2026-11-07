@@ -39,30 +39,11 @@ function setupCopy(button) {
   });
 }
 
-// Replays the real run at a compressed pace. The gaps are for reading, not measured timings.
+// Replays the measured runs at a compressed pace. The gaps are for reading, not measured timings.
 function setupReplay(stage) {
   const lines = [...stage.querySelectorAll('.l')];
-  const steps = [...stage.querySelectorAll('.track li')];
-  const machine = stage.querySelector('#machine');
-  const state = stage.querySelector('#machine-state');
   const replay = stage.querySelector('#replay');
-  const order = steps.map((s) => s.dataset.step);
-  const labels = {
-    boot: 'Booting a clean Windows',
-    copy: 'Copying your build in',
-    run: 'Running HelloSandbox.exe',
-    test: 'Typing a name, clicking Greet',
-    destroy: 'Machine deleted',
-    done: 'Machine gone. This screenshot came back.',
-  };
   let timers = [];
-
-  const show = (at) => {
-    machine.dataset.state = at;
-    state.textContent = labels[at];
-    const reached = at === 'done' ? order.length - 1 : order.indexOf(at);
-    steps.forEach((s, i) => s.classList.toggle('on', i <= reached));
-  };
 
   const play = () => {
     timers.forEach(clearTimeout);
@@ -70,16 +51,12 @@ function setupReplay(stage) {
     stage.classList.add('js-playing');
     lines.forEach((l) => l.classList.remove('on'));
     replay.hidden = true;
-    show('boot');
-    let t = 350;
-    lines.forEach((line, i) => {
-      const at = line.dataset.at;
-      const changed = i > 0 && lines[i - 1].dataset.at !== at;
-      t += at === 'done' ? (changed ? 900 : 110) : changed ? 1000 : 420;
-      timers.push(setTimeout(() => {
-        line.classList.add('on');
-        if (changed || i === 0) show(at);
-      }, t));
+    let t = 300;
+    lines.forEach((line) => {
+      const isCommand = line.classList.contains('cmd');
+      const isResult = line.classList.contains('pass') || line.classList.contains('bad');
+      t += isResult ? 1500 : isCommand ? 700 : 240;
+      timers.push(setTimeout(() => line.classList.add('on'), t));
     });
     timers.push(setTimeout(() => { replay.hidden = false; }, t + 200));
   };
@@ -94,6 +71,4 @@ function setupReplay(stage) {
 
 document.querySelectorAll('[data-tabs]').forEach(setupTabs);
 document.querySelectorAll('.copy').forEach(setupCopy);
-const stage = document.getElementById('stage');
-if (reduceMotion) document.getElementById('machine-state').textContent = 'Screenshot it brought back';
-else setupReplay(stage);
+if (!reduceMotion) setupReplay(document.getElementById('stage'));

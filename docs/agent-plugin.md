@@ -10,7 +10,7 @@ A portable [Agent Plugin](https://agent-plugins.org/) (spec 1.0.0) that gives AI
 ## Before you install
 
 1. Use Windows 11 24H2 or later, Pro, Enterprise or Education. The plugin doesn't work on other systems, because the server needs Windows Sandbox on the PC running the agent.
-2. Install [Node.js 20 or later](https://nodejs.org/) with `winget install OpenJS.NodeJS.LTS --source winget`. Unlike the portable ZIP, the plugin uses your installed Node.js and npm.
+2. Install [Node.js 20 or later](https://nodejs.org/) with `winget install OpenJS.NodeJS.LTS --source winget`. Unlike the portable ZIP, the plugin uses your installed Node.js and npm. If you don't want to install Node.js, use the [agent setup guide](agent-setup.md) instead.
 3. Turn on Windows Sandbox if you haven't. [Turn on Windows Sandbox](../README.md#turn-on-windows-sandbox) covers the steps.
 
 To check your PC, run the read-only readiness check:

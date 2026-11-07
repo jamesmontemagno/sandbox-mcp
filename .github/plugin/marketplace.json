@@ -10,7 +10,7 @@
     {
       "name": "sandbox-mcp",
       "description": "Let AI agents test Windows apps and installers, drive their UI, and see what untrusted files do, on a fresh, throwaway Windows Sandbox machine.",
-      "version": "1.1.0",
+      "version": "1.2.0",
       "source": "./"
     }
   ]
