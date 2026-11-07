@@ -480,6 +480,31 @@ screenshots, no UI. So:
 - The guest desktop gets a plain background so screenshots stay around 100 KB instead of 16 MB.
 - Needs a logged-in Windows session on the host (Windows Sandbox is a desktop feature).
 
+## Verifying changes locally
+
+`npm test` checks the host logic and parses/compiles the guest PowerShell and C# helpers without booting a guest.
+Real desktop verification requires this Windows host's single Sandbox slot; coordinate with other users first
+and never stop somebody else's guest.
+
+```powershell
+$env:SANDBOX_MCP_HOME = Join-Path $PWD 'work\integration'
+node test\integration.js off
+node test\integration.js on
+npm run package:win
+node test\package-smoke.js dist\sandbox-mcp-win-x64-v1.1.0.zip
+```
+
+The integration harness drives the actual MCP stdio server and CLI against the same fresh guest, verifies UIA,
+copies evidence back, and fails if its guest cannot be torn down. JSON results are saved beneath
+`$env:SANDBOX_MCP_HOME\integration`. The package smoke test extracts the ZIP, removes host Node from PATH, checks
+CLI/MCP initialization and command surfaces, and compares every shipped source, agent and skill file with the
+working tree. It does not boot a Sandbox and is not a substitute for the live tests.
+
+For a live extracted-package check, run the integration harness with the extracted `node.exe` and set
+`SANDBOX_MCP_TEST_ROOT` to the extracted folder. `SANDBOX_MCP_TEST_SHA` records the source commit when Git is not on
+the isolated PATH. Set `SANDBOX_MCP_EXPECT_NO_HOST_NODE=1` to require both the bundled runtime and no `node` on PATH;
+keep Windows system directories and the WindowsApps `wsb.exe` alias on PATH.
+
 ## Related projects
 
 - [fmuecke/windows-sandbox-mcp](https://github.com/fmuecke/windows-sandbox-mcp) is another MCP server for Windows
