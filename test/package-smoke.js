@@ -5,6 +5,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { createInterface } from 'node:readline';
 import { setTimeout as delay } from 'node:timers/promises';
+import { fileURLToPath } from 'node:url';
+import { createHash } from 'node:crypto';
 
 if (process.platform !== 'win32') throw new Error('The portable package smoke test requires Windows.');
 const archive = process.argv[2];
@@ -24,6 +26,18 @@ assert.equal(expand.status, 0, `Could not extract package: ${expand.stderr || ex
 const node = path.join(unpacked, 'node.exe');
 const cli = path.join(unpacked, 'sbx.cmd');
 const packageMetadata = JSON.parse(fs.readFileSync(path.join(unpacked, 'package.json'), 'utf8'));
+const sourceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+for (const directory of ['src', 'agent', 'skills']) {
+  const source = path.join(sourceRoot, directory);
+  for (const relative of fs.readdirSync(source, { recursive: true })) {
+    const original = path.join(source, relative);
+    if (!fs.statSync(original).isFile()) continue;
+    const packaged = path.join(unpacked, directory, relative);
+    assert.ok(fs.existsSync(packaged), `Package is missing ${directory}\\${relative}`);
+    const digest = (file) => createHash('sha256').update(fs.readFileSync(file)).digest('hex');
+    assert.equal(digest(packaged), digest(original), `Packaged ${directory}\\${relative} differs from the tested source.`);
+  }
+}
 assert.ok(fs.existsSync(node), 'Bundled Node.js runtime is missing.');
 assert.ok(fs.existsSync(path.join(unpacked, 'NODE-LICENSE.txt')), 'Node.js license is missing.');
 assert.ok(fs.existsSync(path.join(unpacked, 'agent', 'agent.ps1')), 'Guest agent is missing.');
@@ -46,6 +60,10 @@ const invokeCli = (...args) => spawnSync(cmd, ['/d', '/c', `sbx.cmd ${args.join(
 const help = invokeCli('help');
 assert.equal(help.status, 0, `Packaged CLI help failed: ${help.stderr || help.stdout}`);
 assert.match(help.stdout, /Usage: sbx/);
+const sourceHelp = spawnSync(process.execPath, [path.join(sourceRoot, 'src', 'cli.js'), 'help'], { encoding: 'utf8' });
+assert.equal(sourceHelp.status, 0, `Source CLI help failed: ${sourceHelp.stderr}`);
+const withoutHome = (text) => text.replace(/^Data: .*$/m, 'Data: <home>').replaceAll('\r\n', '\n');
+assert.equal(withoutHome(help.stdout), withoutHome(sourceHelp.stdout), 'Packaged CLI help does not expose the tested command surface.');
 const version = invokeCli('version');
 assert.equal(version.status, 0, `Packaged CLI version failed: ${version.stderr || version.stdout}`);
 assert.equal(version.stdout.trim(), packageMetadata.version);
@@ -98,6 +116,11 @@ try {
   send({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} });
   const tools = await response(2);
   assert.ok(tools.result?.tools?.some((tool) => tool.name === 'sandbox_start'), 'MCP tools/list did not return sandbox_start.');
+  const expectedTools = [...fs.readFileSync(path.join(sourceRoot, 'src', 'server.js'), 'utf8')
+    .matchAll(/server\.registerTool\('([^']+)'/g)].map((match) => match[1]).sort();
+  assert.ok(expectedTools.length > 0, 'No source MCP tools were found for package comparison.');
+  assert.deepEqual(tools.result.tools.map((tool) => tool.name).sort(), expectedTools,
+    'Packaged MCP tool surface differs from the tested source.');
   assert.ok(stderr.includes('ready'), 'MCP startup diagnostics were not sent to stderr.');
   console.log('Portable package smoke test passed (CLI without Node on PATH, structured doctor, MCP stdio).');
 } finally {
