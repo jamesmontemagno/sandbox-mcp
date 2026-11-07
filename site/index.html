@@ -4,13 +4,13 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>sandbox-mcp: give your AI agent a brand-new Windows PC, then throw it away</title>
-  <meta name="description" content="An MCP server that gives your AI agent a real, disposable Windows 11 for testing apps, plus a standalone sbx CLI on the same engine.">
+  <meta name="description" content="An MCP server and standalone CLI that let your AI agent test apps on a real, disposable Windows 11 PC.">
   <link rel="canonical" href="https://shanselman.github.io/sandbox-mcp/">
   <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
   <meta name="theme-color" content="#0b1018">
   <meta property="og:type" content="website">
   <meta property="og:title" content="sandbox-mcp: give your AI agent a brand-new Windows PC, then throw it away">
-  <meta property="og:description" content="A real, disposable Windows 11: boot it, deploy your app, drive the controls, catch the crash, keep the evidence, delete the PC.">
+  <meta property="og:description" content="An MCP server and standalone CLI that let your AI agent test apps on a real, disposable Windows 11 PC.">
   <meta property="og:url" content="https://shanselman.github.io/sandbox-mcp/">
   <meta property="og:image" content="https://shanselman.github.io/sandbox-mcp/assets/og.png">
   <meta name="twitter:card" content="summary_large_image">
@@ -87,6 +87,19 @@ Button "Greet" #GreetButton {invoke}</code></pre></li>
       </div>
 
       <figcaption>An illustration, sped up, using the included <a href="https://github.com/shanselman/sandbox-mcp/tree/main/samples/HelloSandbox">HelloSandbox sample</a>. The tools are real. The desktop is drawn.</figcaption>
+      <details class="demo-transcript">
+        <summary>Read the full demo transcript</summary>
+        <ol>
+          <li><code>sandbox_start</code>: clean Windows 11 ready, network off.</li>
+          <li><code>sandbox_copy_in</code>: HelloSandbox build copied in.</li>
+          <li><code>sandbox_launch</code>: HelloSandbox is running.</li>
+          <li><code>sandbox_ui_tree</code>: found the NameBox and Greet button.</li>
+          <li><code>sandbox_ui_action</code>: entered Scott, then clicked Greet.</li>
+          <li><code>sandbox_screenshot</code>: shows &ldquo;Hello, Scott!&rdquo;.</li>
+          <li><code>sandbox_stop</code>: sandbox deleted; screenshots kept.</li>
+        </ol>
+        <p>The tools are real. The desktop shown above is drawn.</p>
+      </details>
     </figure>
   </div>
 </section>
@@ -107,13 +120,26 @@ Button "Greet" #GreetButton {invoke}</code></pre></li>
       <div class="panel" role="tabpanel" id="p-run" aria-labelledby="t-run">
         <div class="panel-copy">
           <h3>Test your build <code class="tool-tag">sandbox_run</code></h3>
-          <p>Does it start without the runtime you forgot to bundle? You get a pass or fail, a screenshot and any crash events.</p>
+          <p>Starting isn&rsquo;t proof. The included test sets a name, clicks Greet, waits for the exact label and compares a saved file. A missing runtime stays a failure.</p>
         </div>
 <pre class="out" tabindex="0"><code><span class="cmd">&gt; sbx run .\samples\HelloSandbox\bin --test .\samples\HelloSandbox\test.ps1</span>
-<span class="cmd">&gt; sbx run .\NativeProof.exe --network off</span>
 
+PASS  HelloSandbox.exe on a fresh Windows Sandbox
+  test     test.ps1 passed
+
+<span class="cmd">&gt; sbx run .\NativeProof.exe --network off</span>
 <span class="bad"><b>FAIL</b></span>  NativeProof.exe on a fresh Windows Sandbox (29.8s)
   why      exited with code -1073741515; Missing dependency: VC++ redistributable.</code></pre>
+        <details class="test-script">
+          <summary>See the actual UI assertions from <code>test.ps1</code></summary>
+<pre tabindex="0"><code>$app = @{ ProcessId = $env:SBX_APP_PID }
+Invoke-SbxUi @app -AutomationId NameBox -Action setvalue -Value 'Sandbox Tester' | Out-Null
+Invoke-SbxUi @app -Name Greet | Out-Null
+$label = (Wait-SbxUi @app -AutomationId Output -Name 'Hello, Sandbox Tester!' -TimeoutSec 5).name
+$file = Join-Path $env:SBX_APP_DIR 'greeting.txt'
+if ((Get-Content $file) -ne $label) { throw 'greeting.txt does not match the label' }
+'PASS'</code></pre>
+        </details>
       </div>
 
       <div class="panel" role="tabpanel" id="p-install" aria-labelledby="t-install" hidden>
@@ -141,6 +167,7 @@ Button "Greet" #GreetButton {invoke}</code></pre></li>
 suspicious.ps1: 3 red flag(s) (watched 40s, network firewall)
              <i class="dot red"></i>created a scheduled task: ContosoUpdate
              <i class="dot red"></i>put something in a Startup folder: C:\Users\...\Start Menu\Programs\Startup\contoso.cmd
+             <i class="dot red"></i>starts itself with Windows: HKCU\Software\Microsoft\Windows\CurrentVersion\Run\ContosoUpdater
              <i class="dot amber"></i>looked up 1 internet name(s): c2.contoso-updates.example
              <i class="dot amber"></i>tried to connect to 2 address(es): 198.51.100.7:4444, 203.0.113.10:80
              …</code></pre>
@@ -206,6 +233,7 @@ sbx deploy .\bin C:\apps\MyApp --launch MyApp.exe --restart
 sbx ui click --name Save
 sbx shot
 sbx stop</code></pre>
+    <p class="section-foot"><code>sbx</code> here is sandbox-mcp&rsquo;s Windows Sandbox CLI. Docker also has its own <code>sbx</code> command for <a href="https://docs.docker.com/reference/cli/sbx/">Docker Sandboxes</a>.</p>
   </div>
 </section>
 

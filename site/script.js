@@ -104,16 +104,36 @@ function setupDemo(demo) {
     step.run();
     timer = setTimeout(tick, step.ms);
   };
-  const start = () => { at = 0; state = 'playing'; toggle.hidden = false; label(); tick(); };
-  toggle.addEventListener('click', () => {
-    if (state === 'done') { start(); return; }
-    clearTimeout(timer);
-    if (state === 'playing') { state = 'paused'; label(); return; }
+  let started = false;
+  const play = (reset = false) => {
+    if (reset) at = 0;
     state = 'playing';
+    toggle.hidden = false;
     label();
     tick();
+  };
+  const start = () => {
+    if (started) return;
+    started = true;
+    play(true);
+  };
+  toggle.addEventListener('click', () => {
+    if (state === 'done') { play(true); return; }
+    clearTimeout(timer);
+    if (state === 'playing') { state = 'paused'; label(); return; }
+    play();
   });
-  start();
+  if ('IntersectionObserver' in window) {
+    const observer = new IntersectionObserver((entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) {
+        observer.disconnect();
+        start();
+      }
+    });
+    observer.observe(demo);
+  } else {
+    start();
+  }
 }
 
 document.querySelectorAll('[data-tabs]').forEach(setupTabs);
