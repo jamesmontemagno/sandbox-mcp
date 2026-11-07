@@ -10,7 +10,8 @@ One MCP tool call or `sbx run`. The measured GUI samples take roughly **40-50 se
 
 *Real app, real guest: Haptics Everywhere's self-contained WPF/WinForms desktop app in a fresh, network-off Sandbox.
 UIA selects the Inspector, the guest switches light to dark, the app relaunches and exits, then the guest is destroyed.
-11-second, 144 KB edited/sped-up footage; boot/teardown title cards summarize actual logs, not filmed boot/shutdown.
+10-second, 183 KB edited footage: light Inspector slowed for readability, repeated dark frames trimmed.
+Boot/teardown title cards summarize actual logs, not filmed boot/shutdown.
 No guest runtime installation or haptic-hardware claim. [Fresh dark lab screenshot](docs/haptics-teaser.png) ·
 [Earlier light-theme inspector](docs/haptics-inspector.png).*
 
