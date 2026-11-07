@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { spawn } from 'node:child_process';
+import { spawn, execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { atomicJson, readJson, withStateLock, createDesktop } from '../../src/coordination.js';
 
@@ -92,4 +92,21 @@ test('fresh incomplete locks are not stolen; malformed state is an explicit erro
   assert.throws(() => withStateLock(home, () => {}, { timeoutMs: 40 }), /state lock/);
   fs.writeFileSync(path.join(home, 'current.json'), '{"seq":');
   assert.throws(() => readJson(path.join(home, 'current.json')), SyntaxError);
+});
+
+test('disconnect cleanup cannot stop or clear a same-ID replacement boot', (t) => {
+  const home = temp(t);
+  const file = path.join(home, 'current.json');
+  const replacement = { id: 'same-provider-id', epoch: 'new-boot', runDir: home };
+  atomicJson(file, replacement);
+  const code = `
+    import assert from 'node:assert/strict';
+    import { stopDetached } from ${JSON.stringify(new URL('../../src/core.js', import.meta.url).href)};
+    assert.equal(stopDetached({id:'same-provider-id',epoch:'old-boot'}), false);
+    assert.equal(stopDetached({id:'same-provider-id'}), false);
+  `;
+  execFileSync(process.execPath, ['--input-type=module', '-e', code], {
+    env: { ...process.env, SANDBOX_MCP_HOME: home },
+  });
+  assert.deepEqual(readJson(file), replacement);
 });

@@ -57,16 +57,18 @@ export async function runApp(o) {
     const prepared = o.provision ? await prepareProvision(r.dependencies || { requirements: [], binaries: [] }, o.provision) : [];
     const boot = await sbx.startSandbox(o);
     booted = true;
-    r.sandbox = { id: boot.id, network: boot.network, bootSeconds: boot.bootSeconds };
+    r.sandbox = { id: boot.id, epoch: boot.epoch, network: boot.network, bootSeconds: boot.bootSeconds };
     r.runDir = boot.runDir; r.outDir = boot.outDir;
-    const inventory = await sbx.exec({ command: GUEST_DEPENDENCY_INVENTORY });
+    const target = await sbx.current();
+    if (!target || target.id !== boot.id || target.epoch !== boot.epoch) throw new Error('Sandbox changed after boot; refusing to provision a replacement.');
+    const inventory = await sbx.exec({ command: GUEST_DEPENDENCY_INVENTORY }, target);
     if (inventory.exitCode !== 0 || inventory.timedOut) throw new Error(`Guest dependency inventory failed: ${inventory.stderr || inventory.stdout}`);
     r.guestBaseline = JSON.parse(inventory.stdout);
     if (o.provision) recordProvisioning(r.runDir, o.provision, r.provisioned);
     await installProvision(prepared, (record) => {
       r.provisioned.push(record);
       recordProvisioning(r.runDir, o.provision, r.provisioned);
-    });
+    }, target);
     if (builtIn) sbx.log(`${exe} is part of Windows: running the sandbox's own copy`);
     else {
       sbx.log(`copying ${dir} to ${appDir}`);
@@ -106,7 +108,7 @@ export async function runApp(o) {
   } finally {
     if (booted && !o.keep) {
       sbx.log('destroying the sandbox');
-      const st = await sbx.stopSandbox().catch((e) => ({ error: e.message }));
+      const st = await sbx.stopSandbox({ target: r.sandbox }).catch((e) => ({ error: e.message }));
       if (st.error) r.stopError = st.error;
     }
     r.kept = booted && !!o.keep;

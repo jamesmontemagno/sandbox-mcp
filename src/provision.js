@@ -180,12 +180,14 @@ export function recordProvisioning(runDir, requested, provisioned) {
   fs.renameSync(temporary, file);
 }
 
-export async function installProvision(prepared, onInstalled = () => {}) {
+export async function installProvision(prepared, onInstalled = () => {}, target) {
   const installed = [];
+  if (prepared.length && !target) target = await sbx.current();
+  if (prepared.length && !target) throw new Error('Start a sandbox before provisioning into it.');
   for (const item of prepared) {
-    const target = await sbx.copyIn(item.file, `C:\\sbx-provision\\${path.basename(item.file)}`);
-    const command = `$ErrorActionPreference='Stop'; $p=Start-Process -FilePath ${q(target.path)} -ArgumentList ${q(item.args)} -Wait -PassThru; exit $p.ExitCode`;
-    const result = await sbx.exec({ command, timeoutSec: 600 });
+    const copied = await sbx.copyIn(item.file, `C:\\sbx-provision\\${path.basename(item.file)}`, target);
+    const command = `$ErrorActionPreference='Stop'; $p=Start-Process -FilePath ${q(copied.path)} -ArgumentList ${q(item.args)} -Wait -PassThru; exit $p.ExitCode`;
+    const result = await sbx.exec({ command, timeoutSec: 600 }, target);
     // 3010 is a successful install requiring reboot, not proof the current guest is usable.
     if (result.timedOut || result.exitCode !== 0) throw new Error(`Provisioning ${item.component} failed (exit ${result.exitCode}${result.timedOut ? ', timed out' : ''}). ${result.exitCode === 3010 ? 'Installer requires reboot; this run cannot be called a pass.' : result.stderr || result.stdout || ''}`);
     const record = { component: item.component, version: item.version, architecture: item.architecture,
@@ -198,17 +200,17 @@ export async function installProvision(prepared, onInstalled = () => {}) {
 
 /** Provision an already-started sandbox; never starts or adopts one. */
 export async function provisionSandbox(app, requested) {
-  const state = await sbx.status();
-  if (!state.running) throw new Error('Start a sandbox before provisioning into it.');
+  const state = await sbx.current();
+  if (!state) throw new Error('Start a sandbox before provisioning into it.');
   const dependencies = scanDependencies(app);
   const prepared = await prepareProvision(dependencies, requested);
   const current = await sbx.status();
-  if (!current.running || current.id !== state.id) throw new Error('Sandbox changed while preparing dependencies; nothing installed.');
+  if (!current.running || current.id !== state.id || current.epoch !== state.epoch) throw new Error('Sandbox changed while preparing dependencies; nothing installed.');
   const provisioned = current.provisioning?.provisioned || [];
   recordProvisioning(current.runDir, requested, provisioned);
   const installed = await installProvision(prepared, (record) => {
     provisioned.push(record);
     recordProvisioning(current.runDir, requested, provisioned);
-  });
+  }, state);
   return { cleanMachine: false, dependencies, provisioned: installed, provenancePath: path.join(current.runDir, 'provisioning.json') };
 }

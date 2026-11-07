@@ -139,7 +139,7 @@ export async function detonate(o) {
   try {
     const boot = await sbx.startSandbox({ ...o, network: net });
     booted = true;
-    r.sandbox = { id: boot.id, network: boot.network, bootSeconds: boot.bootSeconds };
+    r.sandbox = { id: boot.id, epoch: boot.epoch, network: boot.network, bootSeconds: boot.bootSeconds };
     r.runDir = boot.runDir; r.outDir = boot.outDir;
     const guest = `${GUEST_DIR}\\${name}`;
     await sbx.copyIn(src, guest);
@@ -202,7 +202,7 @@ export async function detonate(o) {
   } finally {
     if (booted && !o.keep) {
       sbx.log('destroying the sandbox');
-      const st = await sbx.stopSandbox().catch((e) => ({ error: e.message }));
+      const st = await sbx.stopSandbox({ target: r.sandbox }).catch((e) => ({ error: e.message }));
       if (st.error) r.stopError = st.error;
     }
     r.kept = booted && !!o.keep;

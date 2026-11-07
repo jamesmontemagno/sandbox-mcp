@@ -22,7 +22,7 @@ const network = z.enum(['on', 'firewall', 'off']).optional().describe(
   'off: no network adapter at all (strongest isolation; the agent talks over shared folders, a bit slower).');
 
 // The sandbox this server process started, stopped automatically when the MCP client goes away.
-let startedId = null;
+let startedTarget = null;
 sbx.setDesktopOwner(process.env.SANDBOX_MCP_WORKFLOW || `mcp:${process.pid}`);
 const server = new McpServer({ name: 'sandbox-mcp', version: sbx.VERSION });
 
@@ -55,7 +55,7 @@ server.registerTool('sandbox_start', {
   },
 }, tool(async (a) => {
   const r = await sbx.startSandbox(a);
-  startedId = r.id;
+  startedTarget = { id: r.id, epoch: r.epoch };
   return text(r);
 }));
 
@@ -71,7 +71,7 @@ server.registerTool('sandbox_stop', {
   inputSchema: { force: z.boolean().optional().describe('Also stop a sandbox not started by sandbox-mcp.') },
 }, tool(async (a) => {
   const r = await sbx.stopSandbox(a);
-  startedId = null;
+  startedTarget = null;
   return text(r);
 }));
 
@@ -273,7 +273,7 @@ server.registerTool('sandbox_run', {
   },
 }, tool(async (a) => {
   const r = await runApp(a);
-  if (r.kept) startedId = r.sandbox.id;
+  if (r.kept) startedTarget = r.sandbox;
   const summary = [
     `${r.pass ? 'PASS' : 'FAIL'}: ${r.app}${r.failures.length ? ` (${r.failures.join('; ')})` : ''}`,
     `Report: ${r.reportPath ?? '(none)'}`,
@@ -331,7 +331,7 @@ server.registerTool('sandbox_install_test', {
   },
 }, tool(async (a) => {
   const r = await installTest(a);
-  if (r.kept) startedId = r.sandbox.id;
+  if (r.kept) startedTarget = r.sandbox;
   const parts = [installSummary(r)];
   if (r.installDiff) parts.push(sbx.formatDiff(r.installDiff, { title: 'What the install changed' }));
   if (r.leftovers) parts.push(sbx.formatDiff(r.leftovers, { title: 'Left behind after uninstall' }));
@@ -362,7 +362,7 @@ server.registerTool('sandbox_detonate', {
   },
 }, tool(async (a) => {
   const r = await detonate({ ...a, network: a.network ?? 'off' });
-  if (r.kept) startedId = r.sandbox.id;
+  if (r.kept) startedTarget = r.sandbox;
   const parts = [detonateSummary(r)];
   if (r.findings.length) parts.push(r.findings.map((f) => `- [${f.level}] ${f.text}`).join('\n'));
   if (r.tree?.length) parts.push('Processes:\n' + r.tree.map((p) => `${'  '.repeat(p.depth)}${p.pid} ${p.commandLine || p.path}`).join('\n'));
@@ -378,9 +378,9 @@ let exiting = false;
 function shutdown(why) {
   if (exiting) return;
   exiting = true;
-  if (startedId && process.env.SANDBOX_MCP_KEEP_ON_EXIT !== '1') {
-    sbx.log(`${why}: stopping sandbox ${startedId}`);
-    try { sbx.stopDetached(startedId); } catch {}
+  if (startedTarget && process.env.SANDBOX_MCP_KEEP_ON_EXIT !== '1') {
+    sbx.log(`${why}: stopping owned sandbox ${startedTarget.id} (epoch ${startedTarget.epoch})`);
+    try { sbx.stopDetached(startedTarget); } catch (e) { sbx.log(`Owned sandbox teardown failed: ${e.message}`); }
   }
   setTimeout(() => process.exit(0), 100);
 }

@@ -152,9 +152,10 @@ function updateState(target, fn) {
     return result;
   });
 }
-function clearState(id) {
+function clearState(target) {
   withStateLock(HOME, () => {
-    if (readState()?.id === id) retryFile(() => fs.rmSync(STATE_FILE, { force: true }));
+    const state = readState();
+    if (state?.id === target.id && state?.epoch === target.epoch) retryFile(() => fs.rmSync(STATE_FILE, { force: true }));
   });
 }
 let desktop = createDesktop(HOME, {
@@ -172,9 +173,10 @@ export function releaseDesktop() { return desktop.release(); }
 export async function current() {
   const s = readState();
   if (!s) { verifiedId = null; return null; }
-  if (s.id !== verifiedId) {
-    if (!(await listSandboxes()).includes(s.id)) { clearState(s.id); verifiedId = null; return null; }
-    verifiedId = s.id;
+  const generation = `${s.id}:${s.epoch}`;
+  if (generation !== verifiedId) {
+    if (!(await listSandboxes()).includes(s.id)) { clearState(s); verifiedId = null; return null; }
+    verifiedId = generation;
   }
   return s;
 }
@@ -261,7 +263,7 @@ async function call(op, params = {}, timeoutMs = 60_000, target) {
   } catch (e) {
     audit(s, { op, params: brief(params), ms: Date.now() - t, ok: false, error: e.message });
     if (e.code && !(await listSandboxes()).includes(s.id)) {
-      clearState(s.id); verifiedId = null;
+      clearState(s); verifiedId = null;
       throw new Error('The sandbox is no longer running (closed, crashed, or stopped by its idle timeout). Start a new one.');
     }
     throw e;
@@ -363,7 +365,7 @@ export async function startSandbox({ network = 'on', internet, memoryMB, window 
     const agentArgs = `-Port ${AGENT_PORT} -IdleMinutes ${IDLE_MINUTES}${offline ? ' -Mailbox' : ''}`;
     await wsb(['exec', '--id', id, '-r', 'ExistingLogin', '-c',
       `cmd /c start /min powershell -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File ${GUEST.agent}\\agent.ps1 ${agentArgs}`]);
-    writeState(target); verifiedId = id;
+    writeState(target); verifiedId = `${id}:${epoch}`;
     const hello = await waitFor(() => agentCall(target, 'ping', {}, 3000), 60_000, 'guest agent');
     if (hello.epoch !== epoch) throw new Error(STALE_BOOT);
     if (hello.protocolVersion !== identity.protocolVersion) throw new Error(`Sandbox protocol mismatch: expected ${identity.protocolVersion}, got ${hello.protocolVersion}`);
@@ -373,14 +375,15 @@ export async function startSandbox({ network = 'on', internet, memoryMB, window 
     audit(target, { op: 'start', network, memoryMB, bootSeconds, ok: true });
     return { id, ip: target.ip, epoch, identity, network, runDir, outDir: path.join(runDir, 'out'), user: hello.user, bootSeconds, steps };
   } catch (e) {
-    clearState(id); verifiedId = null;
+    clearState(target); verifiedId = null;
     await wsb(['stop', '--id', id]).catch(() => {});
     throw new Error(`${e.message}\nSteps:\n${steps.join('\n')}`);
   }
 }
 
-export async function stopSandbox({ force = false } = {}) {
+export async function stopSandbox({ force = false, target } = {}) {
   const mine = await current();
+  if (target && (!mine || mine.id !== target.id || mine.epoch !== target.epoch)) throw new Error(STALE_BOOT);
   const running = await listSandboxes();
   if (!mine && running.length && !force) {
     throw new Error(`A sandbox not started by sbx is running (${running.join(', ')}). Use force to stop it.`);
@@ -400,15 +403,20 @@ export async function stopSandbox({ force = false } = {}) {
       ? fs.readdirSync(outDir, { recursive: true }).filter((f) => !f.endsWith('.preview.png') && !f.startsWith('mailbox'))
       : [];
   }
-  if (mine) clearState(mine.id); verifiedId = null;
+  if (mine) clearState(mine); verifiedId = null;
   return result;
 }
 
 /** Fire-and-forget stop that survives this process being killed (used when an MCP client disconnects). */
-export function stopDetached(id) {
-  spawn('wsb.exe', ['stop', '--id', id], { detached: true, stdio: 'ignore', windowsHide: true }).unref();
-  clearState(id);
-  verifiedId = null;
+export function stopDetached(target) {
+  return withStateLock(HOME, () => {
+    const state = readState();
+    if (!target || !target.epoch || state?.id !== target.id || state?.epoch !== target.epoch) return false;
+    spawn('wsb.exe', ['stop', '--id', target.id], { detached: true, stdio: 'ignore', windowsHide: true }).unref();
+    retryFile(() => fs.rmSync(STATE_FILE, { force: true }));
+    verifiedId = null;
+    return true;
+  });
 }
 
 export async function status() {
@@ -432,8 +440,8 @@ function checkAllowed(p) {
   if (!ok) throw new Error(`${p} is outside SANDBOX_MCP_ALLOWED_ROOTS (${ALLOWED_ROOTS.join('; ')})`);
 }
 
-export async function copyIn(hostPath, sandboxPath) {
-  const s = await requireSandbox();
+export async function copyIn(hostPath, sandboxPath, target) {
+  const s = target || await requireSandbox();
   const src = path.resolve(hostPath);
   if (!fs.existsSync(src)) throw new Error(`Host path not found: ${src}`);
   checkAllowed(src);
@@ -455,8 +463,8 @@ export async function deploy(options) {
   return deployDirectory(options, { getSandbox: requireSandbox, checkAllowed, call });
 }
 
-export async function exec({ command, shell, cwd, timeoutSec = 120 }) {
-  return call('exec', { command, shell, cwd, timeoutSec }, (timeoutSec + 30) * 1000);
+export async function exec({ command, shell, cwd, timeoutSec = 120 }, target) {
+  return call('exec', { command, shell, cwd, timeoutSec }, (timeoutSec + 30) * 1000, target);
 }
 
 export async function launch({ path: p, args, cwd, waitForWindowSec = 15 }) {
