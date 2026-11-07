@@ -281,7 +281,7 @@ server.registerTool('sandbox_run', {
     r.console && `--- console stdout ---\n${cap(r.console.stdout, 20_000)}`,
     r.test && `--- test ${r.test.script}: exit ${r.test.exitCode} ---\n${cap(r.test.stdout, 20_000)}${r.test.stderr ? `\n--- test stderr ---\n${cap(r.test.stderr, 10_000)}` : ''}`,
     r.crashes.length && `--- crash events ---\n${r.crashes.map((e) => `${e.source} ${e.id}: ${e.message}`).join('\n\n')}`,
-    `Took ${r.seconds.toFixed(1)}s; sandbox ${r.kept ? 'still running' : 'destroyed'}.`,
+    `Took ${r.seconds.toFixed(1)}s; sandbox ${r.kept ? 'still running' : r.stopError ? 'teardown failed' : r.sandbox ? 'destroyed' : 'not started'}.`,
   ].filter(Boolean).join('\n');
   const shot = r.shots.find((s) => s.name === 'app') ?? r.shots.at(-1);
   const content = [{ type: 'text', text: summary }];
