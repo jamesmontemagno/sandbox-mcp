@@ -19,19 +19,21 @@ export function packageInputs({ app, cert, deps, console: consoleMode }) {
   return { cert, dependencies };
 }
 
-export async function installPackage(file, inputs, appId) {
+export async function installPackage(file, inputs, appId, target) {
+  target ||= await sbx.current();
+  if (!target) throw new Error('Start a sandbox before installing a package.');
   const guestDir = 'C:\\sbx-package';
-  const pkg = await sbx.copyIn(file, `${guestDir}\\${path.basename(file)}`);
+  const pkg = await sbx.copyIn(file, `${guestDir}\\${path.basename(file)}`, target);
   let certPath;
-  if (inputs.cert) certPath = (await sbx.copyIn(inputs.cert, `${guestDir}\\certificate.cer`)).path;
+  if (inputs.cert) certPath = (await sbx.copyIn(inputs.cert, `${guestDir}\\certificate.cer`, target)).path;
   const dependencies = [];
   for (const dep of inputs.dependencies)
-    dependencies.push((await sbx.copyIn(dep, `${guestDir}\\deps\\${path.basename(dep)}`)).path);
+    dependencies.push((await sbx.copyIn(dep, `${guestDir}\\deps\\${path.basename(dep)}`, target)).path);
   const command = `. '${sbx.GUEST.agent}\\package.ps1'; Install-SbxPackage -PackagePath ${q(pkg.path)}` +
     (certPath ? ` -CertificatePath ${q(certPath)}` : '') +
     (dependencies.length ? ` -DependencyPath @(${dependencies.map(q).join(',')})` : '') +
     (appId ? ` -ApplicationId ${q(appId)}` : '') + ' | ConvertTo-Json -Depth 8 -Compress';
-  const result = await sbx.exec({ command, timeoutSec: 300 });
+  const result = await sbx.exec({ command, timeoutSec: 300 }, target);
   if (result.timedOut || result.exitCode !== 0)
     throw new Error(`Package installation failed${result.timedOut ? ' (timed out)' : ''}: ${result.stderr || result.stdout}`);
   try { return JSON.parse(result.stdout.trim()); }

@@ -73,13 +73,13 @@ export async function runApp(o) {
     }, target);
     if (packaged) {
       sbx.log(`installing ${exe}`);
-      r.package = await installPackage(src, packaged, o.appId);
+      r.package = await installPackage(src, packaged, o.appId, target);
       appDir = r.package.installLocation;
       exePath = path.win32.isAbsolute(r.package.executable) ? r.package.executable : path.win32.join(appDir, r.package.executable);
     } else if (builtIn) sbx.log(`${exe} is part of Windows: running the sandbox's own copy`);
     else {
       sbx.log(`copying ${dir} to ${appDir}`);
-      await sbx.copyIn(dir, appDir);
+      await sbx.copyIn(dir, appDir, target);
     }
     sbx.log(`running ${exe}${o.args ? ` ${o.args}` : ''}`);
     r.launchAttempted = true;
