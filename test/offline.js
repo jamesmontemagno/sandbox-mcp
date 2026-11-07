@@ -19,6 +19,7 @@ async function connect() {
     const r = await client.callTool({ name, arguments: args }, undefined, { timeout: 600_000 });
     const txt = r.content.filter((c) => c.type === 'text').map((c) => c.text).join('\n');
     console.log(`  ${name}${r.isError ? ' (isError)' : ''}: ${txt.slice(0, 200).replace(/\s+/g, ' ')}`);
+    if (r.isError) throw new Error(`${name}: ${txt}`);
     return { r, txt };
   };
   return { client, call };
@@ -45,7 +46,9 @@ for (const network of ['firewall', 'off']) {
     check(!(await call('sandbox_copy_in', { hostPath: path.join(root, 'package.json'), sandboxPath: 'C:\\t\\package.json' })).r.isError, `${network}: copy in`);
     check((await call('sandbox_exec', { command: "(Get-Content C:\\t\\package.json -Raw | ConvertFrom-Json).name" })).txt.includes('sandbox-mcp'), `${network}: copied file readable`);
   } finally {
-    if (network === 'firewall') { await call('sandbox_stop'); await client.close(); }
+    if (network === 'firewall') {
+      try { await call('sandbox_stop'); } finally { await client.close(); }
+    }
     else {
       // Leave it running and just disconnect: the server must tear the sandbox down on its own.
       await client.close();

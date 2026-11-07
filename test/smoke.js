@@ -61,7 +61,7 @@ try {
   failed = true;
   console.error(e);
 } finally {
-  try { await call('sandbox_stop'); } catch {}
+  try { await call('sandbox_stop'); } catch (e) { failed = true; console.error('Sandbox teardown failed:', e); }
   await client.close();
 }
 say(failed ? 'SMOKE TEST FAILED' : 'SMOKE TEST PASSED');
